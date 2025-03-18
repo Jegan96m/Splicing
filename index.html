@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Splicing format</title>
+    <title>Html->Geojson Conversion</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 </head>
 <body>
-    <h1>Upload ZIP File</h1>
-    <table>
+    <h1>HTML to Geojson Conversion</h1>
+    <table style="width: 100%;">
         <tr> 
             <td><input type="file" id="fileInput" accept=".zip">
         </tr>
@@ -17,7 +17,12 @@
             <td id="placeholder">Upload html zip file</td>
         </tr>
         <tr>
-            <td><button id="convertButton"style="display: none;" onclick="convertHTMLToCSV()">Download CSV ZIP</button></td>
+            <td><button id="convertButton"style="display: none;" onclick="convertHTMLToCSV()">Download CSV ZIP</button></td>          
+        </tr>
+        <tr>
+            <td style="text-align: right;">
+                <a href="splicing conversion.html" style="text-decoration: none; padding: 8px 12px; background-color: #007bff; color: white; border-radius: 5px;">Splicing Conversion</a>
+            </td>          
         </tr>
     </table>
     <table>
