@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Splicing Conversion to Vetro format</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin-bottom: 10px;
+        }
+        button {
+            padding: 8px 15px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: lightblue; /* Changes background color */
+            color: white; /* Changes text color */
+            transform: scale(1.05); /* Slightly increases the button size */
+        }
+        a:hover {
+            transform: scale(1.05); /* Slightly increases the button size */
+        }
+        #result {
+            font-weight: bold;
+            color: green;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+
+<h2>Splicing Conversion to Vetro format</h2>
+
+<label for="input1">Input 1 (Text to modify) copy from geoJSON:</label>
+<textarea id="input1" placeholder="Enter Input 1"></textarea>
+
+<label for="input2">Input 2 (copy from Fiber reference pair):</label>
+<textarea id="input2" placeholder="Enter Input 2: key1(value1)&#10;key2(value2)&#10;..."></textarea>
+
+
+
+<div style="display: flex; align-items: center; justify-content: space-between;">
+    <div>
+        <button onclick="compareAndReplace()" style="background-color: #00ff9d; color: rgb(0, 45, 248); border-radius: 5px;">Compare & Replace</button>
+        <button onclick="downloadExcel()">Download as Excel</button>
+    </div>
+    <a href="Html-CSV-Geojson.html" style="text-decoration: none; padding: 8px 12px; background-color: #007bff; color: white; border-radius: 5px;">Html->Geojson</a>
+</div>
+
+<script>
+    let modifiedInput1 = ""; // Store the modified text for download
+
+    function compareAndReplace() {
+        const input1 = document.getElementById('input1').value.trim();
+        const input2 = document.getElementById('input2').value.trim();
+
+        if (!input1 || !input2) {
+            alert('Please fill both inputs.');
+            return;
+        }   
+
+        // Normalize Input 2 (Convert newlines to a single format)
+        const normalizedInput2 = input2.replace(/\n/g, ','); // Convert new lines to commas for uniformity
+
+        // Parse input2 into a map of key => value
+        const pairRegex = /([^(),]+)\(([^)]+)\)/g;
+        const replacements = new Map();
+
+        let match;
+        while ((match = pairRegex.exec(normalizedInput2)) !== null) {
+            const key = match[1].trim();  // Example: F2-CABLE-1219
+            const value = match[2].trim(); // Example: NAV1-06-foc1
+            replacements.set(key, value); // Store only the value
+        }
+
+        // Split input1 into words
+        const segments = input1.split(/\s+/);
+
+        // Replace matches using replacements map
+        const modifiedSegments = segments.map(segment => 
+            replacements.has(segment) ? replacements.get(segment) : segment
+        );
+
+        modifiedInput1 = modifiedSegments.join(' ');
+
+        // Replace ">" with a new line
+        modifiedInput1 = modifiedInput1.replace(/(\s*>\s*)/g, '\n');
+
+        // Display result
+        document.getElementById('result').innerText = modifiedInput1;
+    }
+
+    function downloadExcel() {
+        if (!modifiedInput1) {
+            alert("Please process the text before downloading.");
+            return;
+        }
+
+        // Split modified input by new lines to create rows
+        let rows = modifiedInput1.split("\n").map(line => ({ hubName: "Hub1", connections: line }));
+
+        // Convert data to a worksheet
+        const ws = XLSX.utils.json_to_sheet(rows);
+
+        // Create a new workbook and append worksheet
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Connections");
+
+        // Create an Excel file and trigger download
+        XLSX.writeFile(wb, "connections.xlsx");
+    }
+</script>
+
+</body>
+</html>
