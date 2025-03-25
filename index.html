@@ -3,155 +3,146 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Html->Geojson Conversion</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+    <title>Splice table CSV to GeoJSON Processor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    
 </head>
 <body>
-    <h1>HTML to Geojson Conversion</h1>
     <table style="width: 100%;">
-        <tr> 
-            <td><input type="file" id="fileInput" accept=".zip">
+        <tr>
+            <td colspan="2"><h2>Step 1: Upload ZIP File Containing CSVs</h2></td>
         </tr>
         <tr>
-            <td id="placeholder">Upload html zip file</td>
+            <td><input type="file" id="zipFileInput" accept=".zip"></td>
+            <td>
+                <button id="zipActionBtn" onclick="processZip()">Process Splicetable.ZIP</button>
+            </td>
+        </tr>
+        
+        <tr>
+            <td colspan="2"><h2>Step 2: Upload Processed ZIP to Convert to GeoJSON</h2></td>
         </tr>
         <tr>
-            <td><button id="convertButton"style="display: none;" onclick="convertHTMLToCSV()">Download CSV ZIP</button></td>          
+            <td><input type="file" id="geoJsonZipInput" accept=".zip"></td>
+            <td>
+                <button id="zipActionBtn1" onclick="processGeoJsonZip()">Process CSV.ZIP</button>
+            </td>
         </tr>
         <tr>
-            <td style="text-align: right;">
+            <td style="text-align: right;" colspan="2">
                 <a href="splicing conversion.html" style="text-decoration: none; padding: 8px 12px; background-color: #007bff; color: white; border-radius: 5px;">Splicing Conversion</a>
             </td>          
         </tr>
-    </table>
-    <table>
-        <tr> 
-            <td><button id="downloadGeoJsonBtn" style="display: none;" onclick="downloadGeoJSON()">Download GeoJSON</button></td>
+
+        <tr>
+            <td colspan="2"><h2>Output</h2></td>
         </tr>
         <tr>
-            <td><pre id="output"></pre></td>
+            <td colspan="2"><div id="output"></div></td>
         </tr>
     </table>
 
     <script>
-        
-        function updateSentence() {
-            var placeholder = document.getElementById('placeholder');
-            if (placeholder) {
-            placeholder.textContent = "Pls upload the csv.zip file";
-            }
-        }
-        var button = document.getElementById('convertButton');
-
-        async function convertHTMLToCSV() {
-            const fileInput = document.getElementById('fileInput');
-            const file = fileInput.files[0];
-
-            if (file) {
-                const zip = new JSZip();
-                const csvZip = new JSZip();
-                //var button = document.getElementById('convertButton').style.display = 'block';
-
-                zip.loadAsync(file).then(async (zip) => {
-                    const htmlFiles = Object.keys(zip.files).filter(filename => filename.endsWith('.html'));
-                  
-                    for (const filename of htmlFiles) {
-                        const content = await zip.files[filename].async("string");
-                        const parser = new DOMParser();
-                        const doc = parser.parseFromString(content, 'text/html');
-                        const table = doc.querySelector('table');
-
-                        if (table) {
-                            let csv = [];
-                            const rows = table.querySelectorAll('tr');
-
-                            rows.forEach(row => {
-                                const cols = row.querySelectorAll('td, th');
-                                let rowCSV = [];
-
-                                cols.forEach(col => {
-                                    rowCSV.push(col.innerText);
-                                });
-
-                                csv.push(rowCSV.join(','));
-                            });
-
-                            csvZip.file(filename.replace('.html', '.csv'), csv.join('\n'));
-                        } else {
-                            alert(`No table found in ${filename}`);
-                        }
-                    }
-
-                    csvZip.generateAsync({ type: 'blob' }).then(function(content) {
-                        saveAs(content, 'converted_csv_files.zip');
-                    });updateSentence();
-                    
-                        if (button) {
-                        alert('Conversion Completed!, Please upload a CSV.zip file that will be downloaded.');
-                        button.textContent = 'Conversion Completed!';
-                        }// Update button text
-                         if (button) {
-                                button.parentNode.removeChild(button);
-                            };
-
-                }); 
-            } else {
-                alert('Please upload a ZIP file.');
-            }
-            
-        }
-        
-        
-
+        let processedFiles = {};
         let geoJsonFeatures = [];
 
-        document.getElementById('fileInput').addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (!file) {
+        async function processZip() {
+            const fileInput = document.getElementById("zipFileInput");
+            if (!fileInput.files.length) {
+                alert("Please upload a ZIP file.");
                 return;
             }
-            var placeholder = document.getElementById('placeholder');
-            if (placeholder) {
-            placeholder.textContent = '';
+
+            const zip = new JSZip();
+            const zipFile = fileInput.files[0];
+            const zipData = await zip.loadAsync(zipFile);
+            processedFiles = {};
+
+            for (let fileName in zipData.files) {
+                if (fileName.endsWith(".csv")) {
+                    let csvText = await zipData.files[fileName].async("text");
+                    let cleanedFileName = fileName.replace(/^splices_/, "").replace(/\.[^/.]+$/, "");
+                    let processedCSV = processCSV(csvText, cleanedFileName);
+                    processedFiles[cleanedFileName + ".csv"] = processedCSV;
+                }
             }
 
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const contents = e.target.result;
-                JSZip.loadAsync(contents).then(function(zip) {
-                    let fileReadPromises = [];
-                    zip.forEach(function (relativePath, zipEntry) {
-                        if (zipEntry.name.endsWith('.csv')) {
-                            fileReadPromises.push(zipEntry.async("string").then(data => ({
-                                name: zipEntry.name,
-                                data
-                            }))); 
-                            //document.getElementById('convertButton').style.display = 'block';
-                            document.getElementById('downloadGeoJsonBtn').style.display = 'block';
-                        }
-                    });
+            let button = document.getElementById("zipActionBtn");
+            button.textContent = "Download Processed ZIP";
+            button.onclick = downloadProcessedZip; // Change function after processing
+            
+            displayOutput();
+        }
 
-                    Promise.all(fileReadPromises).then(function(csvFiles) {
-                        processCSVFiles(csvFiles);
-                        document.getElementById('convertButton').style.display = 'block';
-                        //document.getElementById('downloadGeoJsonBtn').style.display = 'block';
-                    });
-                });
-            };
-            reader.readAsArrayBuffer(file);
-        });
-        
+        function processCSV(csvText, fileName) {
+            const lines = csvText.split("\n").map(line => line.trim()).filter(line => line);
+            if (lines.length < 2) return "Invalid CSV format.";
 
-        function processCSVFiles(csvFiles) {
-            let formattedRows = [];
+            let headers = lines[0].split(",").map(header => header.trim());
+            const typeIndex = headers.indexOf("type");
+
+            if (typeIndex === -1) return "CSV must contain a 'type' column.";
+
+            let processedRows = [fileName];
+
+            for (let i = 1; i < lines.length; i++) {
+                let row = lines[i].split(",").map(value => value.trim());
+                const typeValue = row[typeIndex]?.toLowerCase();
+                if (typeValue !== "dead" && typeValue !== "spare") {
+                    processedRows.push(row.join(","));
+                }
+            }
+            return processedRows.join("\n");
+        }
+
+        function downloadProcessedZip() {
+            const zip = new JSZip();
+            for (let fileName in processedFiles) {
+                zip.file(fileName, processedFiles[fileName]);
+            }
+
+            zip.generateAsync({ type: "blob" }).then(blob => {
+                saveAs(blob, "processed_csvs.zip");
+                setTimeout(() => {
+                    alert("✅ Processed ZIP file has been downloaded successfully!");
+                }, 1500); // Ensures alert appears AFTER the file download
+            });
+        }
+
+        async function processGeoJsonZip() {
+            const fileInput = document.getElementById("geoJsonZipInput");
+            if (!fileInput.files.length) {
+                alert("Please upload the processed ZIP file.");
+                return;
+            }
+
+            const zip = new JSZip();
+            const zipFile = fileInput.files[0];
+            const zipData = await zip.loadAsync(zipFile);
+            geoJsonFeatures = [];
+
+            let csvFiles = [];
+
+            for (let fileName in zipData.files) {
+                if (fileName.endsWith(".csv")) {
+                    let csvText = await zipData.files[fileName].async("text");
+                    csvFiles.push({ name: fileName, data: csvText });
+                }
+            }
+
+            convertToGeoJSON(csvFiles);
+            displayOutput();
+        }
+
+        function convertToGeoJSON(csvFiles) {
             geoJsonFeatures = [];
 
             csvFiles.forEach(file => {
                 const lines = file.data.split('\n');
                 if (lines.length < 2) return;
 
-                const hubName = lines[0].split(',')[0].trim(); // Extract hub name from the first column of the first row
+                const hubName = lines[0].split(',')[0].trim();
                 let formattedStrings = [];
 
                 for (let i = 1; i < lines.length; i++) {
@@ -159,24 +150,19 @@
                     if (line.length < 2) continue;
 
                     const inCable = line[0].trim();
-                    const outCable = line[1].trim();
+                    const type = line[1].trim();
+                    const outCable = line[2].trim();
 
-                    if (inCable.toUpperCase() === 'DEAD' || outCable.toUpperCase() === 'DEAD'|| inCable.toUpperCase() === 'SPARE' || outCable.toUpperCase() === 'SPARE') {
+                    if (inCable.toUpperCase() === 'DEAD' || outCable.toUpperCase() === 'DEAD' || 
+                        inCable.toUpperCase() === 'SPARE' || outCable.toUpperCase() === 'SPARE') {
                         continue;
                     }
-                    if (inCable.toUpperCase() === 'SPARE' || outCable.toUpperCase() === 'SPARE') {
-                        inCable = '';
-                        outCable = '';
-                    }
 
-                    const formattedString = `In ${inCable} out ${outCable}`;
+                    const formattedString = `In ${inCable} ${type} ${outCable}`;
                     formattedStrings.push(formattedString);
                 }
 
                 if (formattedStrings.length > 0) {
-                    const finalOutput = `${hubName}, ${formattedStrings.join(', ')}`;
-                    formattedRows.push(finalOutput);
-
                     const feature = {
                         type: "Feature",
                         properties: {
@@ -185,14 +171,16 @@
                         },
                         geometry: {
                             type: "Point",
-                            coordinates: [0, 0] // Dummy coordinates, replace with actual if available
+                            coordinates: [0, 0]
                         }
                     };
                     geoJsonFeatures.push(feature);
                 }
             });
 
-            document.getElementById('output').textContent = formattedRows.join('\n');
+            let button = document.getElementById("zipActionBtn1");
+            button.textContent = "Download Geojson";
+            button.onclick = downloadGeoJSON; // Change function after processing
         }
 
         function downloadGeoJSON() {
@@ -202,13 +190,43 @@
             };
 
             const blob = new Blob([JSON.stringify(geoJson, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'data.geojson';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+            saveAs(blob, "data.geojson");
+            setTimeout(() => {
+                alert("✅ Processed ZIP file has been downloaded successfully!");
+            }, 1500); // Ensures alert appears AFTER the file download
+        }
+
+        function displayOutput() {
+            let outputDiv = document.getElementById("output");
+            outputDiv.innerHTML = "";
+
+             // Display processed CSV files
+            for (let fileName in processedFiles) {
+                let pre = document.createElement("pre");
+                pre.textContent = `File: ${fileName}\n${processedFiles[fileName]}`;
+                outputDiv.appendChild(pre);
+            }                               
+
+            if (geoJsonFeatures.length > 0) {
+                let geoJsonContainer = document.createElement("div");
+                geoJsonContainer.style.border = "1px solid #ddd";
+                geoJsonContainer.style.padding = "10px";
+                geoJsonContainer.style.marginTop = "20px";
+                geoJsonContainer.style.overflowX = "auto";
+        
+                let geoJsonTitle = document.createElement("h3");
+                geoJsonTitle.textContent = "Converted GeoJSON (Hub & Connections):";
+                geoJsonContainer.appendChild(geoJsonTitle);
+        
+                geoJsonFeatures.forEach(feature => {
+                    let hubInfo = document.createElement("p");
+                    hubInfo.innerHTML = `<strong>${feature.properties.hubName}:</strong> ${feature.properties.connections}`;
+                    hubInfo.style.marginBottom = "5px";
+                    geoJsonContainer.appendChild(hubInfo);
+                });
+                outputDiv.innerHTML = "";
+                outputDiv.appendChild(geoJsonContainer);
+            }
         }
     </script>
 </body>
