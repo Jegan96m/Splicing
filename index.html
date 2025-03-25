@@ -11,7 +11,7 @@
 <body>
     <table style="width: 100%;">
         <tr>
-            <td colspan="2"><h2>Upload ZIP File Containing CSVs</h2></td>
+            <td colspan="2"><h2>Step 1: Upload ZIP File Containing CSVs</h2></td>
         </tr>
         <tr>
             <td><input type="file" id="zipFileInput" accept=".zip"></td>
@@ -21,7 +21,7 @@
         </tr>
         
         <tr>
-            <td colspan="2"><h2>Upload Processed ZIP to Convert to GeoJSON</h2></td>
+            <td colspan="2"><h2>Step 2: Upload Processed ZIP to Convert to GeoJSON</h2></td>
         </tr>
         <tr>
             <td><input type="file" id="geoJsonZipInput" accept=".zip"></td>
@@ -81,16 +81,37 @@
 
             let headers = lines[0].split(",").map(header => header.trim());
             const typeIndex = headers.indexOf("type");
+                const fibreInIndex = headers.indexOf("fibre_in");
+                const fibreOutIndex = headers.indexOf("fibre_out");
+                const cableInIndex = headers.indexOf("cable_in");
+                const cableOutIndex = headers.indexOf("cable_out");
 
             if (typeIndex === -1) return "CSV must contain a 'type' column.";
 
-            let processedRows = [fileName];
+            let processedRows = [];
+            processedRows.push(fileName); // Add headers
 
             for (let i = 1; i < lines.length; i++) {
                 let row = lines[i].split(",").map(value => value.trim());
                 const typeValue = row[typeIndex]?.toLowerCase();
                 if (typeValue !== "dead" && typeValue !== "spare") {
-                    processedRows.push(row.join(","));
+                    let fibreIn = fibreInIndex !== -1 && !isNaN(row[fibreInIndex]) && row[fibreInIndex] !== ""
+                            ? "F" + row[fibreInIndex] 
+                            : "";
+                        let fibreOut = fibreOutIndex !== -1 && !isNaN(row[fibreOutIndex]) && row[fibreOutIndex] !== ""
+                            ? "F" + row[fibreOutIndex] 
+                            : "";
+        
+                        let cableInFibre = row[cableInIndex].replace("F1_cable", "").trim() + (fibreIn ? " " + fibreIn : "");
+                        let cableOutFibre = row[cableOutIndex].replace("F1_cable", "").trim() + (fibreOut ? " " + fibreOut : "");
+
+                        let additionalInfo = row[typeIndex]; // Default to original value
+                        if (/F1-CABLE/.test(cableInFibre) && /F2-CABLE/.test(cableOutFibre) && typeValue === "split") {
+                            additionalInfo = "PS split";
+                        } else if (/F2-CABLE/.test(cableInFibre) && /F3-CABLE/.test(cableOutFibre) && typeValue === "split") {
+                            additionalInfo = "SS split";
+                        }
+                    processedRows.push(`${cableInFibre},${additionalInfo},${cableOutFibre}`);
                 }
             }
             return processedRows.join("\n");
