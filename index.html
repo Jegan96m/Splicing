@@ -126,7 +126,7 @@
             zip.generateAsync({ type: "blob" }).then(blob => {
                 saveAs(blob, "processed_csvs.zip");
                 setTimeout(() => {
-                    alert("✅ Processed ZIP file has been downloaded successfully!");
+                    alert("✅ Processed CSV ZIP file has been downloaded successfully!");
                 }, 1500); // Ensures alert appears AFTER the file download
             });
         }
@@ -213,7 +213,7 @@
             const blob = new Blob([JSON.stringify(geoJson, null, 2)], { type: 'application/json' });
             saveAs(blob, "data.geojson");
             setTimeout(() => {
-                alert("✅ Processed ZIP file has been downloaded successfully!");
+                alert("✅ Processed GeoJSON file has been downloaded successfully!");
             }, 1500); // Ensures alert appears AFTER the file download
         }
 
