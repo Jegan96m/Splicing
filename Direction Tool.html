@@ -39,8 +39,8 @@
   Upload Fibers GeoJSON:
   <input type="file" id="lineGeojson" accept=".geojson,.json" multiple />
     
-    <button id="downloadCsvBtn" style="text-decoration: none; padding: 1px 5px; background-color: #ff4bd8; color: white; border-radius: 5px;">Download CSV</button>
-    <a href="index.html" style="text-decoration: none; padding: 8px 12px; background-color: #00ffdd; color: rgb(104, 104, 104); border-radius: 5px;">Biarri CSV -> Geojson Tool</a>
+    <button id="downloadBtn"style="text-decoration: none; padding: 2px 12px; background-color: #ff4bd8; color: white; border-radius: 5px;">Download CSV</button>
+    <a href="try2.html" style="text-decoration: none; padding: 8px 12px; background-color: #00ffdd; color: rgb(104, 104, 104); border-radius: 5px;">Biarri CSV -> Geojson Tool</a>
     <a href="Tombstone Formatting Tool.html" style="text-decoration: none; padding: 8px 12px; background-color: #ffe600; color: rgb(107, 107, 107); border-radius: 5px;">Tombstone Formatting Tool</a>
     
 
@@ -61,7 +61,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 let pointLayer = null;
 let lineLayers = [];
 let allLines = [];
-let allPointData = [];
+let pointFeatures = [];
 
 document.getElementById('pointGeojson').addEventListener('change', (e) => {
   const file = e.target.files[0];
@@ -70,6 +70,7 @@ document.getElementById('pointGeojson').addEventListener('change', (e) => {
   const reader = new FileReader();
   reader.onload = function(evt) {
     const geojson = JSON.parse(evt.target.result);
+    pointFeatures = geojson.features || [];
 
     if (pointLayer) map.removeLayer(pointLayer);
 
@@ -85,16 +86,6 @@ document.getElementById('pointGeojson').addEventListener('change', (e) => {
     }).addTo(map);
 
     map.fitBounds(pointLayer.getBounds());
-
-    // prepare allPointData for download
-    allPointData = geojson.features.map(f => {
-      let id = f.properties?.ID || 'NA';
-      let raw = getJoinedLines(f);
-      return {
-        id: id,
-        raw: raw
-      }
-    });
   };
   reader.readAsText(file);
 });
@@ -117,22 +108,6 @@ document.getElementById('lineGeojson').addEventListener('change', (e) => {
     };
     reader.readAsText(file);
   });
-});
-
-document.getElementById('downloadBtn').addEventListener('click', () => {
-  let csvContent = "ID,Splicing_Detail\n";
-  allPointData.forEach(item => {
-    let clean = item.raw.replace(/"/g, '""').replace(/\n/g, "\\n");
-    csvContent += `"${item.id}","${clean}"\n`;
-  });
-  
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "splicing_details.csv";
-  a.click();
-  URL.revokeObjectURL(url);
 });
 
 function showPopup(layer, feature) {
@@ -192,17 +167,17 @@ function buildPopupHtml(content) {
 }
 
 function generatePage1(feature) {
+  let raw = joinLinesProperties(feature);
   let rawID = feature.properties.ID || 'NA';
-  let raw = getJoinedLines(feature);
 
   const formatted = raw
     .split('\n')
-    .map(line => line.trim() === "" ? "<br>" : escapeHtml(line))
+    .map(line => line.trim() === "" ? "" : escapeHtml(line))
     .join('<br>');
 
   return `<div class="popup-content">
     <strong>Splicing Detail:</strong><br/>
-    <strong>${rawID}:</strong><br/>
+    <strong>${rawID}:</strong><br>
     ${formatted}
   </div>`;
 }
@@ -244,8 +219,69 @@ function generatePage2(latlng) {
 
 function generatePage3(feature, latlng) {
   let rawID = feature.properties.ID || 'NA';
-  let raw = getJoinedLines(feature);
+  let raw = joinLinesProperties(feature);
 
+  const markerPt = turf.point([latlng.lng, latlng.lat]);
+  const idRegex = /[A-Z0-9\-]+-FOC\d+/g;
+  const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
+
+  const idToDirection = {};
+  idsInText.forEach(id => {
+    const matchingLines = allLines.filter(line => line.properties?.ID === id);
+    if (matchingLines.length > 0) {
+      let bearings = [];
+      matchingLines.forEach(line => {
+        const coords = line.geometry.coordinates;
+        coords.forEach(coord => {
+          const pt = turf.point(coord);
+          const bearing = turf.bearing(markerPt, pt);
+          bearings.push(bearing);
+        });
+      });
+      if (bearings.length > 0) {
+        let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
+        if (avgBearing < 0) avgBearing += 360;
+        let dir = getDirectionFromBearing(avgBearing);
+        idToDirection[id] = dir;
+      }
+    }
+  });
+
+  const lines = raw.split('\n');
+  const newLines = lines.map(line => {
+    let newLine = line;
+    let replacedIDs = new Set();
+
+    for (const id of idsInText) {
+      if (replacedIDs.has(id)) continue;
+
+      if (newLine.includes(id)) {
+        const regex = new RegExp(`(${id})(\\s*\\([^)]+\\))?`);
+        newLine = newLine.replace(regex, (match, idPart, rangePart) => {
+          const dir = idToDirection[id] ? ` ${idToDirection[id]}` : '';
+          const focMatch = idPart.match(/FOC\d+/);
+          const shortId = focMatch ? focMatch[0] : idPart;
+          return shortId + (rangePart || '') + dir;
+        });
+        replacedIDs.add(id);
+      }
+    }
+
+    return newLine.trim() === "" ? "" : escapeHtml(newLine);
+  });
+
+  const formatted = newLines.join('<br>');
+
+  return `<div class="popup-content">
+    <strong>Splicing Detail (with directions):</strong><br/>
+    <strong>${rawID}:</strong><br>
+    ${formatted}
+  </div>`;
+}
+
+// This returns plain text content only (no HTML tags)
+function generatePage3ContentOnly(feature, latlng) {
+  let raw = joinLinesProperties(feature);
   const markerPt = turf.point([latlng.lng, latlng.lat]);
 
   const idRegex = /[A-Z0-9\-]+-FOC\d+/g;
@@ -285,29 +321,20 @@ function generatePage3(feature, latlng) {
         const regex = new RegExp(`(${id})(\\s*\\([^)]+\\))?`);
         newLine = newLine.replace(regex, (match, idPart, rangePart) => {
           const dir = idToDirection[id] ? ` ${idToDirection[id]}` : '';
-
           const focMatch = idPart.match(/FOC\d+/);
           const shortId = focMatch ? focMatch[0] : idPart;
-
           return shortId + (rangePart || '') + dir;
         });
         replacedIDs.add(id);
       }
     }
-
-    return newLine.trim() === "" ? "" : escapeHtml(newLine);
+    return newLine;
   });
 
-  const formatted = newLines.join('<br>');
-
-  return `<div class="popup-content">
-    <strong>Splicing Detail (with directions):</strong><br/>
-    <strong>${rawID}:</strong><br/>
-    ${formatted}
-  </div>`;
+  return newLines.join('\n');
 }
 
-function getJoinedLines(feature) {
+function joinLinesProperties(feature) {
   const fields = [
     feature.properties?.lines,
     feature.properties?.lines_1,
@@ -341,6 +368,43 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
-  </script>
+
+// =============================
+// CSV EXPORT BUTTON LISTENER
+// =============================
+document.getElementById('downloadBtn').addEventListener('click', () => {
+  if (pointFeatures.length === 0) {
+    alert("No point GeoJSON loaded yet.");
+    return;
+  }
+
+  let csvRows = [];
+  csvRows.push(["rawID", "SplicingDetail_Text"]);
+
+  pointFeatures.forEach(feature => {
+    const rawID = feature.properties?.ID || "NA";
+    const latlng = feature.geometry?.coordinates
+      ? L.latLng(feature.geometry.coordinates[1], feature.geometry.coordinates[0])
+      : L.latLng(0,0);
+
+    let content = generatePage3ContentOnly(feature, latlng);
+    // collapse any 3+ newlines to just 2
+    content = content.replace(/\n{3,}/g, '\n\n');
+    const cleanContent = content.replace(/"/g, '""');
+    csvRows.push([rawID, `"${cleanContent}"`]);
+  });
+
+  const csvString = csvRows.map(row => row.join(",")).join("\n");
+
+  const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", "SplicingDetails.csv");
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+});
+</script>
 </body>
 </html>
