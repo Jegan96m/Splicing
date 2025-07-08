@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Direction Tool</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet/dist/leaflet.css"
+  />
+  <style>
+    #map {
+      height: 600px;
+    }
+    .popup-content {
+      width: 350px;
+      height: 250px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      padding-right: 10px;
+    }
+    .leaflet-popup-content-wrapper {
+      max-width: none !important;
+    }
+    .popup-nav {
+      margin-top: 8px;
+      text-align: center;
+    }
+    .popup-nav button {
+      pointer-events: all;
+    }
+  </style>
+</head>
+<body>
+  <h2>Direction Tool:</h2>
+  Upload Splicing detail GeoJSON:
+  <input type="file" id="pointGeojson" accept=".geojson,.json" />
+  
+  Upload Fibers GeoJSON:
+  <input type="file" id="lineGeojson" accept=".geojson,.json" multiple />
+    
+    <button id="downloadCsvBtn" style="text-decoration: none; padding: 1px 5px; background-color: #ff4bd8; color: white; border-radius: 5px;">Download CSV</button>
+    <a href="try2.html" style="text-decoration: none; padding: 8px 12px; background-color: #00ffdd; color: rgb(104, 104, 104); border-radius: 5px;">Biarri CSV -> Geojson Tool</a>
+    <a href="Tombstone Formatting Tool.html" style="text-decoration: none; padding: 8px 12px; background-color: #ffe600; color: rgb(107, 107, 107); border-radius: 5px;">Tombstone Formatting Tool</a>
+    
+
+
+  <br><br>
+  
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+  <script>
+let map = L.map('map').setView([0, 0], 2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+}).addTo(map);
+
+let pointLayer = null;
+let lineLayers = [];
+let allLines = [];
+let pointFeatures = [];
+
+document.getElementById('pointGeojson').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    const geojson = JSON.parse(evt.target.result);
+
+    if (pointLayer) map.removeLayer(pointLayer);
+
+    pointFeatures = geojson.features || [];
+
+    pointLayer = L.geoJSON(geojson, {
+      pointToLayer: function(feature, latlng) {
+        return L.circleMarker(latlng, { radius: 6, color: 'red' });
+      },
+      onEachFeature: function(feature, layer) {
+        layer.on('click', () => {
+          showPopup(layer, feature);
+        });
+      }
+    }).addTo(map);
+
+    map.fitBounds(pointLayer.getBounds());
+  };
+  reader.readAsText(file);
+});
+
+document.getElementById('lineGeojson').addEventListener('change', (e) => {
+  [...e.target.files].forEach(file => {
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+      const geojson = JSON.parse(evt.target.result);
+
+      let layer = L.geoJSON(geojson, {
+        style: { color: 'blue' }
+      }).addTo(map);
+
+      lineLayers.push(layer);
+
+      geojson.features.forEach(f => {
+        allLines.push(f);
+      });
+    };
+    reader.readAsText(file);
+  });
+});
+
+function showPopup(layer, feature) {
+  let page = 1;
+  let popup;
+
+  function showPage() {
+    let content;
+    if (page === 1) {
+      content = generatePage1(feature);
+    } else if (page === 2) {
+      content = generatePage2(layer.getLatLng());
+    } else if (page === 3) {
+      content = generatePage3(feature, layer.getLatLng());
+    }
+
+    const html = buildPopupHtml(content);
+    popup.setContent(html);
+    attachToggleListener();
+  }
+
+  function togglePage() {
+    page = page === 3 ? 1 : page + 1;
+    showPage();
+  }
+
+  function attachToggleListener() {
+    const btn = document.getElementById('toggleBtn');
+    if (btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        togglePage();
+      });
+    }
+  }
+
+  popup = L.popup({
+    maxWidth: 500,
+    minWidth: 350,
+    maxHeight: 300,
+    autoPan: true
+  })
+    .setLatLng(layer.getLatLng())
+    .setContent(buildPopupHtml(generatePage1(feature)))
+    .openOn(map);
+
+  attachToggleListener();
+}
+
+function buildPopupHtml(content) {
+  return `
+    ${content}
+    <div class="popup-nav">
+      <button id="toggleBtn">Toggle Page</button>
+    </div>
+  `;
+}
+
+function generatePage1(feature) {
+  let rawID = feature.properties.ID || 'NA';
+
+  // read all the `lines`-type fields
+  const linesFields = [
+    feature.properties?.lines,
+    feature.properties?.lines_1,
+    feature.properties?.lines_2,
+    feature.properties?.lines_3,
+    feature.properties?.lines_4
+  ];
+
+  // remove undefined or empty values
+  const nonEmptyBlocks = linesFields.filter(
+    block => block && block.trim() !== ""
+  );
+
+  // join with TWO blank lines to match your pattern
+  const joinedRaw = nonEmptyBlocks.join("");
+
+  // escape HTML but preserve newlines
+  const formatted = escapeHtml(joinedRaw).replace(/\n/g, "<br>");
+
+  return `<div class="popup-content">
+    <strong>Splicing Detail:</strong><br/>
+    <strong>${rawID}:</strong></br>
+    ${formatted}
+  </div>`;
+}
+
+
+
+
+function generatePage2(latlng) {
+  if (allLines.length === 0) {
+    return `<div class="popup-content">(No fiber GeoJSON uploaded yet.)</div>`;
+  }
+
+  const markerPt = turf.point([latlng.lng, latlng.lat]);
+
+  let cablesAtPoint = [];
+
+  allLines.forEach(line => {
+    const lineGeom = turf.lineString(line.geometry.coordinates);
+    const snapped = turf.nearestPointOnLine(lineGeom, markerPt);
+    const dist = snapped.properties.dist;
+    if (dist < 0.0001) {
+      const bearing = turf.bearing(markerPt, snapped);
+      let direction = getDirectionFromBearing(bearing);
+      cablesAtPoint.push({
+        id: line.properties?.ID || "(Unknown)",
+        direction: direction
+      });
+    }
+  });
+
+  if (cablesAtPoint.length === 0) {
+    return `<div class="popup-content">No cables intersecting at this marker.</div>`;
+  }
+
+  let html = `<div class="popup-content"><strong>Cables intersecting here:</strong><ul>`;
+  cablesAtPoint.forEach(c => {
+    html += `<li>${c.id} (${c.direction})</li>`;
+  });
+  html += `</ul></div>`;
+  return html;
+}
+
+function generatePage3(feature, latlng) {
+  const content = generatePage3ContentOnly(feature, latlng);
+  let rawID = feature.properties.ID || 'NA';
+  return `<div class="popup-content">
+    <strong>Splicing Detail (with directions):</strong><br/>
+    <strong>${rawID}:</strong></br>
+    ${content}
+  </div>`;
+}
+
+function generatePage3ContentOnly(feature, latlng) {
+  let raw = feature.properties?.Splicing_detail || feature.properties?.lines || 'N/A';
+  let rawID = feature.properties.ID || 'NA';
+
+  if (Array.isArray(raw)) raw = raw.join('\n\n');
+  else {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) raw = parsed.join('\n\n');
+    } catch (e) {}
+  }
+
+  const markerPt = turf.point([latlng.lng, latlng.lat]);
+
+  const idRegex = /[A-Z0-9\-]+-FOC\d+/g;
+  const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
+
+  const idToDirection = {};
+  idsInText.forEach(id => {
+    const matchingLines = allLines.filter(line => line.properties?.ID === id);
+    if (matchingLines.length > 0) {
+      let bearings = [];
+      matchingLines.forEach(line => {
+        const coords = line.geometry.coordinates;
+        coords.forEach(coord => {
+          const pt = turf.point(coord);
+          const bearing = turf.bearing(markerPt, pt);
+          bearings.push(bearing);
+        });
+      });
+      if (bearings.length > 0) {
+        let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
+        if (avgBearing < 0) avgBearing += 360;
+        let dir = getDirectionFromBearing(avgBearing);
+        idToDirection[id] = dir;
+      }
+    }
+  });
+
+  const lines = raw.split('\n');
+  const newLines = lines.map(line => {
+    let newLine = line;
+    let replacedIDs = new Set();
+
+    for (const id of idsInText) {
+      if (replacedIDs.has(id)) continue;
+
+      if (newLine.includes(id)) {
+        const regex = new RegExp(`(${id})(\\s*\\([^)]+\\))?`);
+        newLine = newLine.replace(regex, (match, idPart, rangePart) => {
+          const dir = idToDirection[id] ? ` (${idToDirection[id]})` : '';
+          const focMatch = idPart.match(/FOC\d+/);
+          const shortId = focMatch ? focMatch[0] : idPart;
+          return shortId + (rangePart || '') + dir;
+        });
+        replacedIDs.add(id);
+      }
+    }
+
+    return newLine.trim() === "" ? "" : escapeHtml(newLine);
+  });
+
+  return newLines.join('<br>');
+}
+
+function getDirectionFromBearing(bearing) {
+  if (bearing >= 337.5 || bearing < 22.5) return "N";
+  if (bearing >= 22.5 && bearing < 67.5) return "NE";
+  if (bearing >= 67.5 && bearing < 112.5) return "E";
+  if (bearing >= 112.5 && bearing < 157.5) return "SE";
+  if (bearing >= 157.5 && bearing < 202.5) return "S";
+  if (bearing >= 202.5 && bearing < 247.5) return "SW";
+  if (bearing >= 247.5 && bearing < 292.5) return "W";
+  if (bearing >= 292.5 && bearing < 337.5) return "NW";
+  return "?";
+}
+
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+document.getElementById('downloadCsvBtn').addEventListener('click', () => {
+  if (pointFeatures.length === 0) {
+    alert("No point GeoJSON loaded yet.");
+    return;
+  }
+
+  let csvRows = [];
+  csvRows.push(["rawID", "SplicingDetail_Text"]);
+
+  pointFeatures.forEach(feature => {
+    const rawID = feature.properties?.ID || "NA";
+    const latlng = feature.geometry?.coordinates
+      ? L.latLng(feature.geometry.coordinates[1], feature.geometry.coordinates[0])
+      : L.latLng(0,0);
+
+    let contentHtml = generatePage3ContentOnly(feature, latlng);
+
+    // Replace <br> tags with newlines
+    const cleanContent = contentHtml
+      .replace(/<br>/g, '\n')
+      .replace(/"/g, '""');
+
+    csvRows.push([rawID, `"${cleanContent}"`]);
+  });
+
+  const csvString = csvRows.map(row => row.join(",")).join("\n");
+
+  const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", "SplicingDetails.csv");
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+});
+  </script>
+</body>
+</html>

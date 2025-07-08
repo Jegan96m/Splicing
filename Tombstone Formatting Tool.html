@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Splice Converter</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    max-width: 900px;
+    margin: 20px auto;
+    padding: 10px;
+  }
+  textarea {
+    width: 100%;
+    height: 150px;
+    margin-bottom: 10px;
+    font-family: monospace;
+  }
+  button {
+    padding: 10px 20px;
+    font-size: 16px;
+    margin-right: 10px;
+  }
+  pre {
+    background: #f0f0f0;
+    padding: 10px;
+    white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+<h2>Tombstone Formatting Tool:</h2>
+
+<label for="inputText">Input:</label>
+<textarea id="inputText" placeholder="Paste your big input text here"></textarea>
+
+<label for="referenceText">Reference (optional):</label>
+<textarea id="referenceText" placeholder="e.g. 288 GP02-14-FOC01(F1-CABLE-0001)"></textarea>
+
+<button onclick="convertText()" style="text-decoration: none; padding: 2px 12px; background-color: #ff4bd8; color: white; border-radius: 5px;">Convert</button>
+<button onclick="downloadGeoJSON()" style="text-decoration: none; padding: 2px 12px; background-color: #ff4bd8; color: white; border-radius: 5px;">Download GeoJSON</button>
+</div>
+    <a href="try2.html" style="text-decoration: none; padding: 8px 12px; background-color: #00ffdd; color: rgb(104, 104, 104); border-radius: 5px;">Biarri CSV -> Geojson Tool</a>
+     <a href="Direction Tool.html" style="text-decoration: none; padding: 8px 12px; background-color: #ff0000; color: rgb(255, 255, 255); border-radius: 5px;">Direction Tool</a>
+</div>
+
+<br>
+
+<h3>Converted Output:</h3>
+<pre id="output"></pre>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+let finalRows = [];
+
+function convertText() {
+  let inputText = document.getElementById('inputText').value.trim();
+  const refLines = document.getElementById('referenceText').value.trim().split('\n');
+
+  const refMap = {};
+  const prefixMap = {};
+  refLines.forEach(line => {
+    const match = line.match(/^(.+?)\s+(.*?)\((.*?)\)$/);
+if (match) {
+  const prefix = match[1].trim();
+  const replacement = match[2].trim();
+  const original = match[3].trim();
+
+  // Only keep the last word of replacement
+  const lastWord = replacement.split('-').pop();
+
+  refMap[original] = replacement;
+  prefixMap[original] = prefix;
+}
+
+  });
+
+  const blocks = inputText.split('>').map(b => b.trim()).filter(b => b !== '');
+  let result = "";
+  finalRows = [];
+
+  blocks.forEach(block => {
+    const [spliceName, rest] = block.split('/');
+    if (!spliceName || !rest) return;
+
+    result += spliceName + "\n";
+    finalRows.push([spliceName]);
+
+    const sentences = rest.split(',').map(s => s.trim()).filter(s => s);
+
+    const groups = {};
+    sentences.forEach(sentence => {
+      const regex = /In\s+(.*?)\s+F(\d+)\s+(express|splice|PSsplit|SSsplit)\s+(.*?)\s+F(\d+)/i;
+      const m = sentence.match(regex);
+      if (m) {
+        let fromCable = m[1].trim();
+        let fromFiber = parseInt(m[2], 10);
+        let type = m[3];
+        let toCable = m[4].trim();
+        let toFiber = parseInt(m[5], 10);
+        const key = `${fromCable}|${type}|${toCable}`;
+        if (!groups[key]) {
+          groups[key] = { fromCable, type, toCable, entries: [] };
+        }
+        groups[key].entries.push({ fromFiber, toFiber });
+      }
+    });
+
+    let isF2Hub = spliceName.startsWith("F2-HUB");
+    let isF3Hub = spliceName.startsWith("F3-HUB");
+
+    if (isF2Hub) {
+  // process all non-PSsplit first
+  Object.values(groups).forEach(group => {
+    if (group.type !== "PSsplit") {
+      processGroup(group, refMap, prefixMap, line => {
+        result += line + "\n";
+        finalRows.push([line]);
+      });
+    }
+  });
+
+  // now handle PSsplit summary if exists
+  if (Object.values(groups).some(g => g.type === "PSsplit")) {
+    let allEntries = [];
+    Object.values(groups).forEach(group => {
+      if (group.type === "PSsplit") {
+        allEntries.push(...group.entries.map(e => ({
+          fromCable: group.fromCable,
+          fromFiber: e.fromFiber,
+          toCable: group.toCable,
+          toFiber: e.toFiber
+        })));
+      }
+    });
+
+    let uniqueFromCables = [...new Set(allEntries.map(e => e.fromCable))];
+    let fromCable = uniqueFromCables[0];
+    let fromCableName = refMap[fromCable] || fromCable;
+    let prefix = prefixMap[fromCable] || "";
+
+    let fromFibers = [...new Set(allEntries.map(e => e.fromFiber))].sort((a,b)=>a-b);
+    let fromRange = fromFibers.length === 1 ? `(${fromFibers[0]})` : `(${fromFibers[0]}-${fromFibers[fromFibers.length-1]})`;
+    let count = fromFibers.length;
+    let splitterText = `(${count}) 1x8 Primary Splitters\n`;
+
+    finalRows.push([`In: ${prefix}F ${fromCableName} ${fromRange}`]);
+finalRows.push([`Out: ${splitterText.trim()}`]);
+finalRows.push([""]);
+
+
+    let cablesMap = {};
+    allEntries.forEach(e => {
+      if (!cablesMap[e.toCable]) cablesMap[e.toCable] = [];
+      cablesMap[e.toCable].push(e.toFiber);
+    });
+
+    let portCounter = 1;
+    Object.entries(cablesMap).forEach(([toCable, fibers]) => {
+      let sortedFibers = [...new Set(fibers)].sort((a,b)=>a-b);
+      let portStart = portCounter;
+      let portEnd = portCounter + sortedFibers.length - 1;
+      let psRange = portStart === portEnd ? `In: (PS port ${portStart})` : `In: (PS port ${portStart}-${portEnd})`;
+      let toCableName = refMap[toCable] || toCable;
+      let fiberRange = sortedFibers.length === 1 ? `(${sortedFibers[0]})` : `(${sortedFibers[0]}-${sortedFibers[sortedFibers.length-1]})`;
+      let prefix = prefixMap[toCable] || "";
+      result += `${psRange}\nOut: ${prefix}F ${toCableName} ${fiberRange}\n`;
+      finalRows.push([psRange]);
+      finalRows.push([`Out: ${prefix}F ${toCableName} ${fiberRange}`]);
+      portCounter += sortedFibers.length;
+    });
+  }
+}
+ else {
+      // For everything else (including F3-HUB)
+      Object.values(groups).forEach(group => {
+        if (group.type !== "SSsplit") {
+          processGroup(group, refMap, prefixMap, line => {
+            result += line + "\n";
+            finalRows.push([line]);
+          });
+        }
+      });
+
+      if (isF3Hub && Object.values(groups).some(g => g.type === "SSsplit")) {
+        let allEntries = [];
+        Object.values(groups).forEach(group => {
+          if (group.type === "SSsplit") {
+            allEntries.push(...group.entries.map(e => ({
+              fromCable: group.fromCable,
+              fromFiber: e.fromFiber
+            })));
+          }
+        });
+
+        if (allEntries.length > 0) {
+          let uniqueFromCables = [...new Set(allEntries.map(e => e.fromCable))];
+          let fromCable = uniqueFromCables[0];
+          let fromCableName = refMap[fromCable] || fromCable;
+          let prefix = prefixMap[fromCable] || "";
+
+          let fromFibers = [...new Set(allEntries.map(e => e.fromFiber))].sort((a,b)=>a-b);
+          let fromRange = fromFibers.length === 1 ? `(${fromFibers[0]})` : `(${fromFibers[0]}-${fromFibers[fromFibers.length-1]})`;
+          let count = fromFibers.length;
+          let splitterText = `Out: (${count}) 1x4 Secondary Splitters`;
+
+          result += `In: ${prefix}F ${fromCableName} ${fromRange}\n`;
+          result += splitterText + "\n";
+          finalRows.push([`In: ${prefix}F ${fromCableName} ${fromRange}`]);
+          finalRows.push([splitterText]);
+        }
+      }
+    }
+
+    result += "\n";
+    finalRows.push([""]);
+  });
+
+  document.getElementById('output').textContent = result;
+}
+
+function processGroup(group, refMap, prefixMap, callback) {
+  const fromCableName = refMap[group.fromCable] || group.fromCable;
+  const prefix = prefixMap[group.fromCable] || "";
+  group.entries.sort((a, b) => a.fromFiber - b.fromFiber);
+
+  let fromFibers = group.entries.map(e => e.fromFiber);
+  let toFibers = group.entries.map(e => e.toFiber);
+  const fromRanges = splitIntoRanges(fromFibers);
+  const toRanges = splitIntoRanges(toFibers);
+
+  for (let i = 0; i < fromRanges.length; i++) {
+    const fr = fromRanges[i];
+    const tr = toRanges[i] || fr;
+    const fromRange = fr[0] === fr[1] ? `(${fr[0]})` : `(${fr[0]}-${fr[1]})`;
+    const toRange = tr[0] === tr[1] ? `(${tr[0]})` : `(${tr[0]}-${tr[1]})`;
+    const toCableName = refMap[group.toCable] || group.toCable;
+
+    // Print In line
+    callback(`In: ${prefix}F ${fromCableName} ${fromRange}`);
+    // Print Out line
+    callback(`Out: ${prefix}F ${toCableName} ${toRange}\n`);
+
+    // Add a blank line between groups (but not after the last)
+    
+  }
+}
+
+
+function splitIntoRanges(numbers) {
+  if (numbers.length === 0) return [];
+  let sorted = [...new Set(numbers)].sort((a,b)=>a-b);
+  let ranges = [];
+  let start = sorted[0];
+  let end = sorted[0];
+  for (let i=1; i<sorted.length; i++) {
+    if (sorted[i] === end+1) {
+      end=sorted[i];
+    } else {
+      ranges.push([start,end]);
+      start=end=sorted[i];
+    }
+  }
+  ranges.push([start,end]);
+  return ranges;
+}
+
+function downloadGeoJSON() {
+  if (finalRows.length === 0) {
+    alert("Please convert first!");
+    return;
+  }
+
+  let features = [];
+  let currentFeature = null;
+  let currentLines = [];
+
+  finalRows.forEach(row => {
+    let rawLine = row[0] !== undefined ? row[0] : "";
+
+    if (/^[A-Z0-9\-]+$/.test(rawLine.trim())) {
+      // It's a HUB name like F2-HUB-xxxx
+      if (currentFeature) {
+        currentFeature.properties.lines = currentLines.join("\n");
+        features.push(currentFeature);
+      }
+      currentFeature = {
+        type: "Feature",
+        properties: {
+          name: rawLine.trim(),
+          lines: ""
+        }
+      };
+      currentLines = [];
+    } else if (currentFeature) {
+      currentLines.push(rawLine);
+    }
+  });
+
+  // Push the last feature
+  if (currentFeature) {
+    currentFeature.properties.lines = currentLines.join("\n");
+    features.push(currentFeature);
+  }
+
+  const geojson = {
+    type: "FeatureCollection",
+    features: features
+  };
+
+  const blob = new Blob(
+    [JSON.stringify(geojson, null, 2)],
+    { type: "application/json" }
+  );
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "converted_data.geojson";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+
+
+
+</script>
+</body>
+</html>
