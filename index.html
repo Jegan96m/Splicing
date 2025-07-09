@@ -85,6 +85,7 @@
 
             let headers = lines[0].split(",").map(header => header.trim());
             const typeIndex = headers.indexOf("type");
+            const tierOut = header.indexOf("tier_out");
                 const fibreInIndex = headers.indexOf("fibre_in");
                 const fibreOutIndex = headers.indexOf("fibre_out");
                 const cableInIndex = headers.indexOf("cable_in");
@@ -98,7 +99,8 @@
             for (let i = 1; i < lines.length; i++) {
                 let row = lines[i].split(",").map(value => value.trim());
                 const typeValue = row[typeIndex]?.toLowerCase();
-                if (typeValue !== "dead" && typeValue !== "spare") {
+                const tierValue = row[tierOut]?.toLowerCase();
+                if (typeValue !== "dead" && typeValue !== "spare" && tierValue !== "dedicated_cable") {
                     let fibreIn = fibreInIndex !== -1 && !isNaN(row[fibreInIndex]) && row[fibreInIndex] !== ""
                             ? "F" + row[fibreInIndex] 
                             : "";
