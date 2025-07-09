@@ -113,9 +113,9 @@
 
                         let additionalInfo = row[typeIndex]; // Default to original value
                         if (/F1-CABLE/.test(cableInFibre) && /F2-CABLE/.test(cableOutFibre) && typeValue === "split") {
-                            additionalInfo = "PS split";
+                            additionalInfo = "PSsplit";
                         } else if (/F2-CABLE/.test(cableInFibre) && /F3-CABLE/.test(cableOutFibre) && typeValue === "split") {
-                            additionalInfo = "SS split";
+                            additionalInfo = "SSsplit";
                         }
                     processedRows.push(`${cableInFibre},${additionalInfo},${cableOutFibre}`);
                 }
