@@ -85,7 +85,7 @@
 
             let headers = lines[0].split(",").map(header => header.trim());
             const typeIndex = headers.indexOf("type");
-            const tierOut = header.indexOf("tier_out");
+            const tierOut = headers.indexOf("tier_out");
                 const fibreInIndex = headers.indexOf("fibre_in");
                 const fibreOutIndex = headers.indexOf("fibre_out");
                 const cableInIndex = headers.indexOf("cable_in");
