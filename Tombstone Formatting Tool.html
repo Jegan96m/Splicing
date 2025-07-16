@@ -99,7 +99,8 @@ if (match) {
         let type = m[3];
         let toCable = m[4].trim();
         let toFiber = parseInt(m[5], 10);
-        const key = `${fromCable}|${type}|${toCable}`;
+        const diff = toFiber - fromFiber;
+        const key = `${fromCable}|${type}|${toCable}|${diff}`;
         if (!groups[key]) {
           groups[key] = { fromCable, type, toCable, entries: [] };
         }
