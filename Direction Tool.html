@@ -123,6 +123,13 @@ function showPopup(layer, feature) {
     } else if (page === 3) {
       content = generatePage3(feature, layer.getLatLng());
     }
+    else if (page === 4) {
+    content = generatePage4(feature, layer.getLatLng());
+    }
+    else if (page === 5) {
+    content = generatePage5(feature, layer.getLatLng());
+    }
+
 
     const html = buildPopupHtml(content);
     popup.setContent(html);
@@ -130,7 +137,7 @@ function showPopup(layer, feature) {
   }
 
   function togglePage() {
-    page = page === 3 ? 1 : page + 1;
+    page = page === 5 ? 1 : page + 1;
     showPage();
   }
 
@@ -279,6 +286,387 @@ function generatePage3(feature, latlng) {
   </div>`;
 }
 
+function generatePage4(feature, latlng) {
+    const rawID = feature.properties?.ID || 'NA';
+    const raw = joinLinesProperties(feature);
+    const lines = raw.split('\n');
+
+    // === Reuse Page 3's direction logic ===
+    const markerPt = turf.point([latlng.lng, latlng.lat]);
+    const idRegex = /[A-Z0-9\-]+-FOC\d+/g;
+    const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
+
+    const idToDirection = {};
+    idsInText.forEach(id => {
+        const matchingLines = allLines.filter(line => line.properties?.ID === id);
+        if (matchingLines.length > 0) {
+            let bearings = [];
+            matchingLines.forEach(line => {
+                const coords = line.geometry.coordinates;
+                coords.forEach(coord => {
+                    const pt = turf.point(coord);
+                    const bearing = turf.bearing(markerPt, pt);
+                    bearings.push(bearing);
+                });
+            });
+            if (bearings.length > 0) {
+                let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
+                if (avgBearing < 0) avgBearing += 360;
+                idToDirection[id] = getDirectionFromBearing(avgBearing); // "N", "S", etc.
+            }
+        }
+    });
+
+    // Process pairs WITH directions
+    const processedOutput = processFiberPairs(lines, idToDirection);
+
+    // Format output
+    const formattedOutput = processedOutput
+        .map(line => line.trim() === "" ? "" : escapeHtml(line))
+        .join('<br>');
+
+    return `
+        <div class="popup-content" style="text-align: left;">
+            <strong>Fiber Pattern Processor Results:</strong><br>
+            <div style="margin-left: 0;"><strong>${rawID}:</strong></div>
+            <div style="text-align: left;">${formattedOutput}</div>
+        </div>`;
+}
+
+// Updated to accept directions
+function processFiberPairs(lines, idToDirection = {}) {
+    const pairs = [];
+    let currentPair = null;
+
+    // Parse into In/Out pairs
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('In:')) {
+            if (currentPair) pairs.push(currentPair);
+            currentPair = { in: trimmed, out: null };
+        } else if (trimmed.startsWith('Out:')) {
+            if (currentPair) currentPair.out = trimmed;
+        }
+    }
+
+    
+    if (currentPair) pairs.push(currentPair);
+
+    // Process pairs with directions
+    let processed = [];
+    let i = 0;
+    while (i < pairs.length) {
+    const current = pairs[i];
+    const next = pairs[i + 1];
+
+    const getFocId = (str) => str.match(/[A-Z0-9\-]+-FOC\d+/i)?.[0];
+
+    const focId = getFocId(current.in);
+    const direction = focId ? idToDirection[focId] || '' : '';
+
+    if (next && next.out && next.out.includes('Splitter')) {
+        const currentRange = extractRange(current.in);
+        const nextRange = extractRange(next.in);
+
+        if (currentRange && nextRange && currentRange.end + 1 === nextRange.start) {
+            // --- Combine current In range ---
+            const combined = {
+                in: `${current.in.split('(')[0].trim()} (${currentRange.start}-${nextRange.end}) ${direction}`.trim(),
+                out: current.out
+            };
+            // Add direction to combined.out (current.out content)
+            const currentOutId = getFocId(current.out);
+            const currentOutDir = currentOutId ? idToDirection[currentOutId] || direction : direction;
+            if (current.out) {
+                if (currentOutId) {
+                    combined.out = current.out.replace(/(\))/, `) ${currentOutDir}`).trim();
+                } else {
+                    combined.out = current.out.trim() + ` ${currentOutDir}`;
+                }
+            }
+            
+
+            // --- Add direction to next.in ---
+            const nextInId = getFocId(next.in);
+            const nextInDir = nextInId ? idToDirection[nextInId] || direction : direction;
+            next.in = next.in.replace(/(\))/, `) ${nextInDir}`).trim();
+
+            // --- Add direction to next.out (splitter) ---
+            const nextOutId = getFocId(next.out);
+            const nextOutDir = nextOutId ? idToDirection[nextOutId] || direction : direction;
+            if (next.out) {
+                if (nextOutId) {
+                    next.out = next.out.replace(/(\))/, `) ${nextOutDir}`).trim();
+                } else {
+                    next.out = next.out.trim() ;
+                }
+            }
+
+           
+
+            processed.push(combined);
+            processed.push(next);
+            i += 2;
+            continue;
+        }
+    }
+
+    // Add direction to current.in
+    if (focId && direction) {
+        current.in = current.in.replace(/(\))/, `) ${direction}`).trim();
+    }
+
+    // Always add direction to current.out if it contains FOC ID
+    const outId = getFocId(current.out || '');
+    const outDir = outId ? idToDirection[outId] || direction : direction;
+    if (current.out) {
+        if (outId) {
+            current.out = current.out.replace(/(\))/, `) ${outDir}`).trim();
+        } else {
+            current.out = current.out.trim() + ` ${direction}`;
+        }
+    }
+     // === Add (Passthrough) if in and out fiber ranges match ===
+        const inRange = extractRange(current.in);
+        const outRange = extractRange(current.out);
+        const inFiberCount = current.in.match(/\b\d+F\b/)?.[0];
+        const outFiberCount = current.out?.match(/\b\d+F\b/)?.[0];
+        const outText = (current.out || '').toLowerCase();
+        const isSplitter = outText.includes('splitter')
+        if (
+            inRange &&
+            outRange &&
+            inRange.start === outRange.start &&
+            inRange.end === outRange.end &&
+            !isSplitter &&
+            inFiberCount &&
+            outFiberCount &&
+            inFiberCount === outFiberCount
+        ) {
+            current.out += '\n(Passthrough)';
+        }
+
+    processed.push(current);
+    i++;
+}
+
+
+    // Convert to lines
+    let result = [];
+    for (const pair of processed) {
+        result.push(pair.in);
+        result.push(pair.out || '');
+        result.push(''); // Space between pairs
+    }
+    if (result.length > 0 && result[result.length - 1] === '') {
+        result.pop(); // Remove trailing empty line
+    }
+    return result;
+}
+
+// Helper function to extract ranges
+function extractRange(inputStr) {
+    const singleMatch = inputStr.match(/\((\d+)\)$/);
+    if (singleMatch) {
+        const num = parseInt(singleMatch[1]);
+        return { start: num, end: num };
+    }
+    
+    const rangeMatch = inputStr.match(/\((\d+)-(\d+)\)$/);
+    if (rangeMatch) {
+        return {
+            start: parseInt(rangeMatch[1]),
+            end: parseInt(rangeMatch[2])
+        };
+    }
+    
+    return null;
+}
+function extractRange(line) {
+    const match = line.match(/\((\d+)(?:-(\d+))?\)/);
+    if (!match) return null;
+    const start = parseInt(match[1], 10);
+    const end = match[2] ? parseInt(match[2], 10) : start;
+    return { start, end };
+}
+
+
+function generatePage5(feature, latlng) {
+    const rawID = feature.properties?.ID || 'NA';
+    const raw = joinLinesProperties(feature);
+    const lines = raw.split('\n');
+
+    // Direction logic from Page 3
+    const markerPt = turf.point([latlng.lng, latlng.lat]);
+    const idRegex = /[A-Z0-9\-]+-FOC\d+/g;
+    const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
+
+    const idToDirection = {};
+    idsInText.forEach(id => {
+        const matchingLines = allLines.filter(line => line.properties?.ID === id);
+        if (matchingLines.length > 0) {
+            let bearings = [];
+            matchingLines.forEach(line => {
+                const coords = line.geometry.coordinates;
+                coords.forEach(coord => {
+                    const pt = turf.point(coord);
+                    const bearing = turf.bearing(markerPt, pt);
+                    bearings.push(bearing);
+                });
+            });
+            if (bearings.length > 0) {
+                let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
+                if (avgBearing < 0) avgBearing += 360;
+                idToDirection[id] = getDirectionFromBearing(avgBearing);
+            }
+        }
+    });
+
+    // Run processor for simplified names
+    const processedOutput = processFiberPairsPage5(lines, idToDirection);
+
+    const formattedOutput = processedOutput
+        .map(line => line.trim() === "" ? "" : escapeHtml(line))
+        .join('<br>');
+
+    return `
+        <div class="popup-content" style="text-align: left;">
+            <strong>Fiber Pattern Processor Results:</strong><br>
+            <div style="margin-left: 0;"><strong>${rawID}:</strong></div>
+            <div style="text-align: left;">${formattedOutput}</div>
+        </div>`;
+}
+
+function simplifyCableName(full) {
+    const match = full.match(/FOC\d+/i);
+    return match ? match[0] : full;
+}
+
+function processFiberPairsPage5(lines, idToDirection = {}) {
+    const pairs = [];
+    let currentPair = null;
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('In:')) {
+            if (currentPair) pairs.push(currentPair);
+            currentPair = { in: trimmed, out: null };
+        } else if (trimmed.startsWith('Out:')) {
+            if (currentPair) currentPair.out = trimmed;
+        }
+    }
+    if (currentPair) pairs.push(currentPair);
+
+    const getFocId = (str) => str.match(/[A-Z0-9\-]+-FOC\d+/i)?.[0];
+
+    let processed = [];
+    let i = 0;
+
+    while (i < pairs.length) {
+        const current = pairs[i];
+        const next = pairs[i + 1];
+
+        const focId = getFocId(current.in);
+        const direction = focId ? idToDirection[focId] || '' : '';
+
+        if (next && next.out && next.out.includes('Splitter')) {
+            const currentRange = extractRange(current.in);
+            const nextRange = extractRange(next.in);
+
+           if (currentRange && nextRange && currentRange.end + 1 === nextRange.start) {
+              const simplifiedIn = simplifyCableName(focId);
+              const fibreInfo = current.in.match(/\b\d+F\b/)?.[0] || '';
+              const combined = {
+                  in: `In: ${fibreInfo} ${simplifiedIn} (${currentRange.start}-${nextRange.end}) ${direction}`,
+                  out: current.out
+              };
+
+                // Add direction to current.out if not a splitter
+                const outId = getFocId(current.out);
+                const outDir = outId ? idToDirection[outId] || direction : direction;
+                if (outId) {
+                    const simplifiedOut = simplifyCableName(outId);
+                    combined.out = current.out.replace(outId, simplifiedOut).replace(/(\))/, `) ${outDir}`);
+                }
+
+                // Clean next.in (simplify and add direction)
+                const nextInId = getFocId(next.in);
+                if (nextInId) {
+                    const simplifiedNextIn = simplifyCableName(nextInId);
+                    next.in = next.in.replace(nextInId, simplifiedNextIn).replace(/(\))/, `) ${direction}`);
+                }
+
+                // Clean next.out (splitter → no direction)
+                const nextOutId = getFocId(next.out);
+                if (nextOutId) {
+                    const simplifiedNextOut = simplifyCableName(nextOutId);
+                    next.out = next.out.replace(nextOutId, simplifiedNextOut).replace(/(\))/, `) ${direction}`);
+                } else {
+                    next.out = next.out.trim(); // No direction for Splitters
+                }
+
+                processed.push(combined);
+                processed.push(next);
+                i += 2;
+                continue;
+            }
+        }
+
+        // Default: Add direction to current.in
+        if (focId && direction) {
+            current.in = current.in.replace(focId, simplifyCableName(focId)).replace(/(\))/, `) ${direction}`);
+        }
+
+        // Add direction to current.out if NOT Splitter
+        const outId = getFocId(current.out || '');
+        const outDir = outId ? idToDirection[outId] || direction : direction;
+        if (current.out) {
+            if (outId) {
+                const simplifiedOut = simplifyCableName(outId);
+                current.out = current.out.replace(outId, simplifiedOut).replace(/(\))/, `) ${outDir}`);
+            } else {
+                current.out = current.out.trim(); // Splitters: no direction
+            }
+        }
+
+     
+     // === Add (Passthrough) if in and out fiber ranges match ===
+        const inRange = extractRange(current.in);
+        const outRange = extractRange(current.out);
+        const inFiberCount = current.in.match(/\b\d+F\b/)?.[0];
+        const outFiberCount = current.out?.match(/\b\d+F\b/)?.[0];
+        const outText = (current.out || '').toLowerCase();
+        const isSplitter = outText.includes('splitter')
+        if (
+            inRange &&
+            outRange &&
+            inRange.start === outRange.start &&
+            inRange.end === outRange.end &&
+            !isSplitter &&
+            inFiberCount &&
+            outFiberCount &&
+            inFiberCount === outFiberCount
+        ) {
+            current.out +=  '\n<strong>(Passthrough)</strong>';
+        }
+
+        processed.push(current);
+        i++;
+    }
+
+    let result = [];
+    for (const pair of processed) {
+        result.push(pair.in);
+        result.push(pair.out || '');
+        result.push('');
+    }
+    if (result.length > 0 && result[result.length - 1] === '') result.pop();
+    return result;
+}
+
+
+
+
 // This returns plain text content only (no HTML tags)
 function generatePage3ContentOnly(feature, latlng) {
   let raw = joinLinesProperties(feature);
@@ -334,6 +722,48 @@ function generatePage3ContentOnly(feature, latlng) {
   return newLines.join('\n');
 }
 
+// Add this function to generate Page 5 content as plain text
+function generatePage5ContentOnly(feature, latlng) {
+    try {
+        const raw = joinLinesProperties(feature);
+        const lines = raw.split('\n');
+
+        // Direction logic
+        const markerPt = turf.point([latlng.lng, latlng.lat]);
+        const idRegex = /[A-Z0-9\-]+-FOC\d+/g;
+        const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
+
+        const idToDirection = {};
+        idsInText.forEach(id => {
+            const matchingLines = allLines.filter(line => line.properties?.ID === id);
+            if (matchingLines.length > 0) {
+                let bearings = [];
+                matchingLines.forEach(line => {
+                    const coords = line.geometry.coordinates;
+                    coords.forEach(coord => {
+                        const pt = turf.point(coord);
+                        const bearing = turf.bearing(markerPt, pt);
+                        bearings.push(bearing);
+                    });
+                });
+                if (bearings.length > 0) {
+                    let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
+                    if (avgBearing < 0) avgBearing += 360;
+                    idToDirection[id] = getDirectionFromBearing(avgBearing);
+                }
+            }
+        });
+
+        // Process the content
+        const processedOutput = processFiberPairsPage5(lines, idToDirection);
+        return processedOutput.join('\n');
+    } catch (e) {
+        console.error("Error generating Page5 content:", e);
+        return "Error generating content";
+    }
+}
+
+
 function joinLinesProperties(feature) {
   const fields = [
     feature.properties?.lines,
@@ -349,22 +779,21 @@ function joinLinesProperties(feature) {
 }
 
 function getDirectionFromBearing(bearing) {
-  if (bearing >= 337.5 || bearing < 22.5) return "N";
-  if (bearing >= 22.5 && bearing < 67.5) return "NE";
-  if (bearing >= 67.5 && bearing < 112.5) return "E";
-  if (bearing >= 112.5 && bearing < 157.5) return "SE";
-  if (bearing >= 157.5 && bearing < 202.5) return "S";
-  if (bearing >= 202.5 && bearing < 247.5) return "SW";
-  if (bearing >= 247.5 && bearing < 292.5) return "W";
-  if (bearing >= 292.5 && bearing < 337.5) return "NW";
+  if (bearing >= 348.75 || bearing < 11.25) return "N";
+  if (bearing >= 11.25 && bearing < 78.75) return "NE";
+  if (bearing >= 78.75 && bearing < 123.75) return "E";
+  if (bearing >= 123.75 && bearing < 168.75) return "SE";
+  if (bearing >= 168.75 && bearing < 213.75) return "S";
+  if (bearing >= 213.75 && bearing < 258.75) return "SW";
+  if (bearing >= 258.75 && bearing < 303.75) return "W";
+  if (bearing >= 303.75 && bearing < 348.75) return "NW";
   return "?";
 }
 
 function escapeHtml(str) {
   return str
     .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
+  
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
@@ -405,6 +834,64 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
   link.click();
   document.body.removeChild(link);
 });
+
+document.getElementById('downloadPage5CSV').addEventListener('click', function() {
+    try {
+        if (!pointFeatures || pointFeatures.length === 0) {
+            alert("No point GeoJSON loaded yet. Please upload a splicing detail GeoJSON first.");
+            return;
+        }
+
+        // Create features array
+        const features = pointFeatures.map(feature => {
+            try {
+                const coords = feature.geometry?.coordinates;
+                const latlng = coords ? L.latLng(coords[1], coords[0]) : L.latLng(0, 0);
+                
+                return {
+                    type: "Feature",
+                    geometry: feature.geometry,
+                    properties: {
+                        rawID: feature.properties?.ID || "NA",
+                        SplicingContent: generatePage5ContentOnly(feature, latlng)
+                    }
+                };
+            } catch (e) {
+                console.error("Error processing feature:", feature, e);
+                return null;
+            }
+        }).filter(f => f !== null); // Remove any null features from errors
+
+        // Create GeoJSON
+        const geoJson = {
+            type: "FeatureCollection",
+            features: features
+        };
+
+        // Create download
+        const blob = new Blob([JSON.stringify(geoJson, null, 2)], { 
+            type: "application/geo+json" 
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "SplicingDetails_Page5.geojson";
+        document.body.appendChild(link);
+        link.click();
+        
+        // Clean up
+        setTimeout(() => {
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }, 100);
+        
+    } catch (e) {
+        console.error("Download failed:", e);
+        alert("Download failed. Check console for details.");
+    }
+});
+
+
 </script>
 </body>
 </html>
