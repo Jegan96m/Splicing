@@ -101,6 +101,7 @@ if (match) {
         let toFiber = parseInt(m[5], 10);
         const diff = toFiber - fromFiber;
         const key = `${fromCable}|${type}|${toCable}|${diff}`;
+
         if (!groups[key]) {
           groups[key] = { fromCable, type, toCable, entries: [] };
         }
@@ -136,24 +137,34 @@ if (match) {
       }
     });
 
+    // determine unique from‑cable, name, prefix
     let uniqueFromCables = [...new Set(allEntries.map(e => e.fromCable))];
     let fromCable = uniqueFromCables[0];
     let fromCableName = refMap[fromCable] || fromCable;
     let prefix = prefixMap[fromCable] || "";
 
+    // compute from‑fiber range & count
     let fromFibers = [...new Set(allEntries.map(e => e.fromFiber))].sort((a,b)=>a-b);
-    let fromRange = fromFibers.length === 1 ? `(${fromFibers[0]})` : `(${fromFibers[0]}-${fromFibers[fromFibers.length-1]})`;
+    let fromRange = fromFibers.length === 1
+      ? `(${fromFibers[0]})`
+      : `(${fromFibers[0]}-${fromFibers[fromFibers.length-1]})`;
     let count = fromFibers.length;
-    let splitterText = `(${count}) 1x8 Primary Splitters\n`;
 
+    // 🔧 pluralize “Primary Splitter(s)”
+    const label = count > 1 ? "Primary Splitters" : "Primary Splitter";
+    const splitterText = `(${count}) 1x8 ${label}`;
+
+    result += `In: ${prefix}F ${fromCableName} ${fromRange}\n`;
+    result += splitterText + "\n\n";
+    // push the summary lines
     finalRows.push([`In: ${prefix}F ${fromCableName} ${fromRange}`]);
-finalRows.push([`Out: ${splitterText.trim()}`]);
-finalRows.push([""]);
+    finalRows.push([`Out: ${splitterText}`]);
+    finalRows.push([""]);
 
-
+    // now distribute PS ports across to‑cables
     let cablesMap = {};
     allEntries.forEach(e => {
-      if (!cablesMap[e.toCable]) cablesMap[e.toCable] = [];
+      cablesMap[e.toCable] = cablesMap[e.toCable] || [];
       cablesMap[e.toCable].push(e.toFiber);
     });
 
@@ -161,14 +172,25 @@ finalRows.push([""]);
     Object.entries(cablesMap).forEach(([toCable, fibers]) => {
       let sortedFibers = [...new Set(fibers)].sort((a,b)=>a-b);
       let portStart = portCounter;
-      let portEnd = portCounter + sortedFibers.length - 1;
-      let psRange = portStart === portEnd ? `In: (PS port ${portStart})` : `In: (PS port ${portStart}-${portEnd})`;
-      let toCableName = refMap[toCable] || toCable;
-      let fiberRange = sortedFibers.length === 1 ? `(${sortedFibers[0]})` : `(${sortedFibers[0]}-${sortedFibers[sortedFibers.length-1]})`;
-      let prefix = prefixMap[toCable] || "";
-      result += `${psRange}\nOut: ${prefix}F ${toCableName} ${fiberRange}\n`;
+      let portEnd   = portCounter + sortedFibers.length - 1;
+
+      // ← updated pluralization here
+      const portCount = sortedFibers.length;
+      const portLabel = portCount > 1 ? "PS ports" : "PS port";
+      let psRange = portCount > 1
+        ? `In: (${portLabel} ${portStart}-${portEnd})`
+        : `In: (${portLabel} ${portStart})`;
+
+      const toCableName = refMap[toCable] || toCable;
+      const fiberRange = sortedFibers.length === 1
+        ? `(${sortedFibers[0]})`
+        : `(${sortedFibers[0]}-${sortedFibers[sortedFibers.length-1]})`;
+      const toPrefix   = prefixMap[toCable] || "";
+
+      result += `${psRange}\nOut: ${toPrefix}F ${toCableName} ${fiberRange}\n\n`;
       finalRows.push([psRange]);
-      finalRows.push([`Out: ${prefix}F ${toCableName} ${fiberRange}`]);
+      finalRows.push([`Out: ${toPrefix}F ${toCableName} ${fiberRange}\n`]);
+
       portCounter += sortedFibers.length;
     });
   }
@@ -196,21 +218,28 @@ finalRows.push([""]);
         });
 
         if (allEntries.length > 0) {
-          let uniqueFromCables = [...new Set(allEntries.map(e => e.fromCable))];
-          let fromCable = uniqueFromCables[0];
-          let fromCableName = refMap[fromCable] || fromCable;
-          let prefix = prefixMap[fromCable] || "";
+            let uniqueFromCables = [...new Set(allEntries.map(e => e.fromCable))];
+            let fromCable = uniqueFromCables[0];
+            let fromCableName = refMap[fromCable] || fromCable;
+            let prefix = prefixMap[fromCable] || "";
 
-          let fromFibers = [...new Set(allEntries.map(e => e.fromFiber))].sort((a,b)=>a-b);
-          let fromRange = fromFibers.length === 1 ? `(${fromFibers[0]})` : `(${fromFibers[0]}-${fromFibers[fromFibers.length-1]})`;
-          let count = fromFibers.length;
-          let splitterText = `Out: (${count}) 1x4 Secondary Splitters`;
+            let fromFibers = [...new Set(allEntries.map(e => e.fromFiber))]
+                              .sort((a,b)=>a-b);
+            let fromRange = fromFibers.length === 1 
+                            ? `(${fromFibers[0]})` 
+                            : `(${fromFibers[0]}-${fromFibers[fromFibers.length-1]})`;
+            let count = fromFibers.length;
 
-          result += `In: ${prefix}F ${fromCableName} ${fromRange}\n`;
-          result += splitterText + "\n";
-          finalRows.push([`In: ${prefix}F ${fromCableName} ${fromRange}`]);
-          finalRows.push([splitterText]);
-        }
+            // ← updated here
+            const label = count > 1 ? "Splitters" : "Splitter";
+            const splitterText = `Out: (${count}) 1x4 Secondary ${label}`;
+
+            result += `In: ${prefix}F ${fromCableName} ${fromRange}\n`;
+            result += splitterText + "\n";
+            finalRows.push([`In: ${prefix}F ${fromCableName} ${fromRange}`]);
+            finalRows.push([splitterText]);
+          }
+
       }
     }
 
@@ -223,7 +252,7 @@ finalRows.push([""]);
 
 function processGroup(group, refMap, prefixMap, callback) {
   const fromCableName = refMap[group.fromCable] || group.fromCable;
-  const prefix = prefixMap[group.fromCable] || "";
+  const prefixIn = prefixMap[group.fromCable] || "";
   group.entries.sort((a, b) => a.fromFiber - b.fromFiber);
 
   let fromFibers = group.entries.map(e => e.fromFiber);
@@ -237,13 +266,16 @@ function processGroup(group, refMap, prefixMap, callback) {
     const fromRange = fr[0] === fr[1] ? `(${fr[0]})` : `(${fr[0]}-${fr[1]})`;
     const toRange = tr[0] === tr[1] ? `(${tr[0]})` : `(${tr[0]}-${tr[1]})`;
     const toCableName = refMap[group.toCable] || group.toCable;
+      // 🛑 Skip pairs where toCableName includes "demand"
+    if (toCableName.includes("demand")) continue;
+    const prefixOut = prefixMap[group.toCable] || ""; 
 
     // Print In line
-    callback(`In: ${prefix}F ${fromCableName} ${fromRange}`);
+    callback(`In: ${prefixIn}F ${fromCableName} ${fromRange}`);
     // Print Out line
-    callback(`Out: ${prefix}F ${toCableName} ${toRange}\n`);
+    callback(`Out: ${prefixOut}F ${toCableName} ${toRange}\n`);
 
-    // Add a blank line between groups (but not after the last)
+    
     
   }
 }
