@@ -557,7 +557,14 @@ function processFiberPairsPage5(lines, idToDirection = {}) {
     }
     if (currentPair) pairs.push(currentPair);
 
-    const getFocId = (str) => str.match(/[A-Z0-9\-]+-FOC\d+/i)?.[0];
+    const getFocId = (str) => {
+    const match = str.match(/[A-Z0-9\-]+-FOC\d+/i);
+    if (match) return match[0];
+  
+    // Fallback: extract cable name before the fiber range
+    const fallback = str.match(/\d+F\s+([^\(]+)/i);
+    return fallback ? fallback[1].trim() : undefined;
+  };
 
     let processed = [];
     let i = 0;
