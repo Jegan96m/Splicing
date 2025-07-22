@@ -38,7 +38,7 @@
   
   Upload Fibers GeoJSON:
   <input type="file" id="lineGeojson" accept=".geojson,.json" multiple />
-    <button id="downloadBtn"style="text-decoration: none; padding: 2px 12px; background-color: #ff4bd8; color: white; border-radius: 5px;">Download CSV</button>
+    
     <button id="downloadPage5CSV"style="text-decoration: none; padding: 2px 12px; background-color: #ff4bd8; color: white; border-radius: 5px;">Download Splicing content</button>
     <a href="index.html" style="text-decoration: none; padding: 8px 12px; background-color: #00ffdd; color: rgb(104, 104, 104); border-radius: 5px;">Biarri CSV -> Geojson Tool</a>
     <a href="Tombstone Formatting Tool.html" style="text-decoration: none; padding: 8px 12px; background-color: #ffe600; color: rgb(107, 107, 107); border-radius: 5px;">Tombstone Formatting Tool</a>
@@ -875,7 +875,7 @@ document.getElementById('downloadPage5CSV').addEventListener('click', function()
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = "SplicingDetails_Page5.geojson";
+        link.download = "SplicingContent.geojson";
         document.body.appendChild(link);
         link.click();
         
