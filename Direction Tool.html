@@ -229,30 +229,50 @@ function generatePage3(feature, latlng) {
   let raw = joinLinesProperties(feature);
 
   const markerPt = turf.point([latlng.lng, latlng.lat]);
-  const idRegex = /[A-Z0-9\-]+-FOC\d+/g;
+  const idRegex = /[A-Z0-9\-]+-FOC\d+|Stub/g;
+
   const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
 
   const idToDirection = {};
   idsInText.forEach(id => {
-    const matchingLines = allLines.filter(line => line.properties?.ID === id);
-    if (matchingLines.length > 0) {
-      let bearings = [];
-      matchingLines.forEach(line => {
-        const coords = line.geometry.coordinates;
-        coords.forEach(coord => {
-          const pt = turf.point(coord);
-          const bearing = turf.bearing(markerPt, pt);
-          bearings.push(bearing);
-        });
-      });
-      if (bearings.length > 0) {
-        let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
-        if (avgBearing < 0) avgBearing += 360;
-        let dir = getDirectionFromBearing(avgBearing);
-        idToDirection[id] = dir;
+    const matchingLines = allLines.filter(line => {
+      const propId = line.properties?.ID;
+      if (!propId) return false;
+      if (id === 'Stub') return propId.includes('Stub'); // Match anything containing 'Stub'
+      return propId === id;
+    });
+
+     if (matchingLines.length > 0) {
+    let bearings = [];
+
+    matchingLines.forEach(line => {
+      const coords = line.geometry.coordinates;
+      if (coords.length < 2) return;
+
+      const lineString = turf.lineString(coords);
+      const snapped = turf.nearestPointOnLine(lineString, markerPt, { units: 'meters' });
+      const snappedIndex = snapped.properties.index;
+
+      let refPoint;
+      if (snappedIndex < coords.length - 1) {
+        refPoint = turf.point(coords[snappedIndex + 1]);
+      } else if (snappedIndex > 0) {
+        refPoint = turf.point(coords[snappedIndex - 1]);
+      } else {
+        return;
       }
+
+      const bearing = turf.bearing(markerPt, refPoint);
+      bearings.push(bearing);
+    });
+
+    if (bearings.length > 0) {
+      let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
+      if (avgBearing < 0) avgBearing += 360;
+      idToDirection[id] = getDirectionFromBearing(avgBearing);
     }
-  });
+  }
+});
 
   const lines = raw.split('\n');
   const newLines = lines.map(line => {
@@ -265,9 +285,18 @@ function generatePage3(feature, latlng) {
       if (newLine.includes(id)) {
         const regex = new RegExp(`(${id})(\\s*\\([^)]+\\))?`);
         newLine = newLine.replace(regex, (match, idPart, rangePart) => {
-          const dir = idToDirection[id] ? ` ${idToDirection[id]}` : '';
+          let dir = idToDirection[id] ? ` ${idToDirection[id]}` : '';
           const focMatch = idPart.match(/FOC\d+/);
           const shortId = focMatch ? focMatch[0] : idPart;
+
+          // Stub override directions
+          const isIn = raw.includes(`In: ${line}`);
+          const isOut = raw.includes(`Out: ${line}`);
+          if (id === 'Stub') {
+            if (line.startsWith('In:')) dir = ' NE';
+            else if (line.startsWith('Out:')) dir = ' NW';
+          }
+
           return shortId + (rangePart || '') + dir;
         });
         replacedIDs.add(id);
@@ -286,6 +315,7 @@ function generatePage3(feature, latlng) {
   </div>`;
 }
 
+
 function generatePage4(feature, latlng) {
     const rawID = feature.properties?.ID || 'NA';
     const raw = joinLinesProperties(feature);
@@ -293,12 +323,17 @@ function generatePage4(feature, latlng) {
 
     // === Reuse Page 3's direction logic ===
     const markerPt = turf.point([latlng.lng, latlng.lat]);
-    const idRegex = /[A-Z0-9\-]+-FOC\d+/g;
+    const idRegex = /[A-Z0-9\-]+-FOC\d+|Stub/g;
     const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
 
     const idToDirection = {};
     idsInText.forEach(id => {
-        const matchingLines = allLines.filter(line => line.properties?.ID === id);
+        const matchingLines = allLines.filter(line => {
+    const propId = line.properties?.ID;
+    if (!propId) return false;
+    if (id === 'Stub') return propId.includes('Stub'); // Match anything containing 'Stub'
+    return propId === id;
+  });
         if (matchingLines.length > 0) {
             let bearings = [];
             matchingLines.forEach(line => {
@@ -359,10 +394,17 @@ function processFiberPairs(lines, idToDirection = {}) {
     const current = pairs[i];
     const next = pairs[i + 1];
 
-    const getFocId = (str) => str.match(/[A-Z0-9\-]+-FOC\d+/i)?.[0];
+    const getFocId = (str) => str.match(/[A-Z0-9\-]+-FOC\d+/i)?.[0] || (str.includes('Stub') ? 'Stub' : undefined);
 
+    // Determine direction for current.in
     const focId = getFocId(current.in);
-    const direction = focId ? idToDirection[focId] || '' : '';
+    let direction = '';
+    if (focId === 'Stub') {
+        direction = 'NE';
+    } else if (focId) {
+        direction = idToDirection[focId] || '';
+    }
+
 
     if (next && next.out && next.out.includes('Splitter')) {
         const currentRange = extractRange(current.in);
@@ -388,7 +430,15 @@ function processFiberPairs(lines, idToDirection = {}) {
 
             // --- Add direction to next.in ---
             const nextInId = getFocId(next.in);
-            const nextInDir = nextInId ? idToDirection[nextInId] || direction : direction;
+            let nextInDir = '';
+            if (nextInId === 'Stub') {
+              // Assign your desired fixed direction for Stub, e.g., 'NE'
+              nextInDir = 'NE';
+            } else if (nextInId) {
+              nextInDir = idToDirection[nextInId] || direction;
+            } else {
+              nextInDir = direction;
+            }
             next.in = next.in.replace(/(\))/, `) ${nextInDir}`).trim();
 
             // --- Add direction to next.out (splitter) ---
@@ -418,7 +468,15 @@ function processFiberPairs(lines, idToDirection = {}) {
 
     // Always add direction to current.out if it contains FOC ID
     const outId = getFocId(current.out || '');
-    const outDir = outId ? idToDirection[outId] || direction : direction;
+    let outDir = '';
+    if (outId === 'Stub') {
+        outDir = 'NW';
+    } else if (outId) {
+        outDir = idToDirection[outId] || direction;
+    } else {
+        outDir = direction;
+    }
+
     if (current.out) {
         if (outId) {
             current.out = current.out.replace(/(\))/, `) ${outDir}`).trim();
@@ -498,29 +556,48 @@ function generatePage5(feature, latlng) {
 
     // Direction logic from Page 3
     const markerPt = turf.point([latlng.lng, latlng.lat]);
-    const idRegex = /[A-Z0-9\-]+-FOC\d+/g;
+    const idRegex = /[A-Z0-9\-]+-FOC\d+|Stub/g;
     const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
 
     const idToDirection = {};
     idsInText.forEach(id => {
-        const matchingLines = allLines.filter(line => line.properties?.ID === id);
+        const matchingLines = allLines.filter(line => {
+    const propId = line.properties?.ID;
+    if (!propId) return false;
+    if (id === 'Stub') return propId.includes('Stub'); // Match anything containing 'Stub'
+    return propId === id;
+  });
         if (matchingLines.length > 0) {
-            let bearings = [];
-            matchingLines.forEach(line => {
-                const coords = line.geometry.coordinates;
-                coords.forEach(coord => {
-                    const pt = turf.point(coord);
-                    const bearing = turf.bearing(markerPt, pt);
-                    bearings.push(bearing);
-                });
-            });
-            if (bearings.length > 0) {
-                let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
-                if (avgBearing < 0) avgBearing += 360;
-                idToDirection[id] = getDirectionFromBearing(avgBearing);
-            }
-        }
+    let bearings = [];
+
+    matchingLines.forEach(line => {
+      const coords = line.geometry.coordinates;
+      if (coords.length < 2) return;
+
+      const lineString = turf.lineString(coords);
+      const snapped = turf.nearestPointOnLine(lineString, markerPt, { units: 'meters' });
+      const snappedIndex = snapped.properties.index;
+
+      let refPoint;
+      if (snappedIndex < coords.length - 1) {
+        refPoint = turf.point(coords[snappedIndex + 1]);
+      } else if (snappedIndex > 0) {
+        refPoint = turf.point(coords[snappedIndex - 1]);
+      } else {
+        return;
+      }
+
+      const bearing = turf.bearing(markerPt, refPoint);
+      bearings.push(bearing);
     });
+
+    if (bearings.length > 0) {
+      let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
+      if (avgBearing < 0) avgBearing += 360;
+      idToDirection[id] = getDirectionFromBearing(avgBearing);
+    }
+  }
+});
 
     // Run processor for simplified names
     const processedOutput = processFiberPairsPage5(lines, idToDirection);
@@ -538,6 +615,7 @@ function generatePage5(feature, latlng) {
 }
 
 function simplifyCableName(full) {
+   
     const match = full.match(/FOC\d+/i);
     return match ? match[0] : full;
 }
@@ -558,13 +636,14 @@ function processFiberPairsPage5(lines, idToDirection = {}) {
     if (currentPair) pairs.push(currentPair);
 
     const getFocId = (str) => {
-    const match = str.match(/[A-Z0-9\-]+-FOC\d+/i);
-    if (match) return match[0];
-  
-    // Fallback: extract cable name before the fiber range
-    const fallback = str.match(/\d+F\s+([^\(]+)/i);
-    return fallback ? fallback[1].trim() : undefined;
-  };
+  const match = str.match(/[A-Z0-9\-]+-FOC\d+/i);
+  if (match) return match[0];
+
+  // Fallback: extract cable name before the fiber range
+  const fallback = str.match(/\d+F\s+([^\(]+)/i);
+  return fallback ? fallback[1].trim() : undefined;
+};
+
 
     let processed = [];
     let i = 0;
@@ -573,8 +652,15 @@ function processFiberPairsPage5(lines, idToDirection = {}) {
         const current = pairs[i];
         const next = pairs[i + 1];
 
+        const getFocId = (str) => str.match(/[A-Z0-9\-]+-FOC\d+/i)?.[0] || (str.includes('Stub') ? 'Stub' : undefined);
+        // Determine direction for current.in
         const focId = getFocId(current.in);
-        const direction = focId ? idToDirection[focId] || '' : '';
+        let direction = '';
+        if (focId === 'Stub') {
+            direction = 'NE';
+        } else if (focId) {
+            direction = idToDirection[focId] || '';
+        }
 
         if (next && next.out && next.out.includes('Splitter')) {
             const currentRange = extractRange(current.in);
@@ -589,15 +675,32 @@ function processFiberPairsPage5(lines, idToDirection = {}) {
               };
 
                 // Add direction to current.out if not a splitter
-                const outId = getFocId(current.out);
-                const outDir = outId ? idToDirection[outId] || direction : direction;
+                const outId = getFocId(current.out || '');
+                let outDir = '';
+                if (outId === 'Stub') {
+                    outDir = 'NW';
+                } else if (outId) {
+                    outDir = idToDirection[outId] || direction;
+                } else {
+                    outDir = direction;
+                }
                 if (outId) {
                     const simplifiedOut = simplifyCableName(outId);
                     combined.out = current.out.replace(outId, simplifiedOut).replace(/(\))/, `) ${outDir}`);
                 }
 
                 // Clean next.in (simplify and add direction)
+                // --- Add direction to next.in ---
                 const nextInId = getFocId(next.in);
+                let nextInDir = '';
+                if (nextInId === 'Stub') {
+                  // Assign your desired fixed direction for Stub, e.g., 'NE'
+                  nextInDir = 'NE';
+                } else if (nextInId) {
+                  nextInDir = idToDirection[nextInId] || direction;
+                } else {
+                  nextInDir = direction;
+                }
                 if (nextInId) {
                     const simplifiedNextIn = simplifyCableName(nextInId);
                     next.in = next.in.replace(nextInId, simplifiedNextIn).replace(/(\))/, `) ${direction}`);
@@ -626,7 +729,15 @@ function processFiberPairsPage5(lines, idToDirection = {}) {
 
         // Add direction to current.out if NOT Splitter
         const outId = getFocId(current.out || '');
-        const outDir = outId ? idToDirection[outId] || direction : direction;
+        let outDir = '';
+        if (outId === 'Stub') {
+            outDir = 'NW';
+        } else if (outId) {
+            outDir = idToDirection[outId] || direction;
+        } else {
+            outDir = direction;
+        }
+
         if (current.out) {
             if (outId) {
                 const simplifiedOut = simplifyCableName(outId);
@@ -732,34 +843,54 @@ function generatePage3ContentOnly(feature, latlng) {
 // Add this function to generate Page 5 content as plain text
 function generatePage5ContentOnly(feature, latlng) {
     try {
+        
         const raw = joinLinesProperties(feature);
         const lines = raw.split('\n');
 
         // Direction logic
         const markerPt = turf.point([latlng.lng, latlng.lat]);
-        const idRegex = /[A-Z0-9\-]+-FOC\d+/g;
+        const idRegex = /[A-Z0-9\-]+-FOC\d+|Stub/g;
         const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
 
         const idToDirection = {};
         idsInText.forEach(id => {
-            const matchingLines = allLines.filter(line => line.properties?.ID === id);
+            const matchingLines = allLines.filter(line => {
+    const propId = line.properties?.ID;
+    if (!propId) return false;
+    if (id === 'Stub') return propId.includes('Stub'); // Match anything containing 'Stub'
+    return propId === id;
+  });
             if (matchingLines.length > 0) {
-                let bearings = [];
-                matchingLines.forEach(line => {
-                    const coords = line.geometry.coordinates;
-                    coords.forEach(coord => {
-                        const pt = turf.point(coord);
-                        const bearing = turf.bearing(markerPt, pt);
-                        bearings.push(bearing);
-                    });
-                });
-                if (bearings.length > 0) {
-                    let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
-                    if (avgBearing < 0) avgBearing += 360;
-                    idToDirection[id] = getDirectionFromBearing(avgBearing);
+              let bearings = [];
+
+              matchingLines.forEach(line => {
+                const coords = line.geometry.coordinates;
+                if (coords.length < 2) return;
+
+                const lineString = turf.lineString(coords);
+                const snapped = turf.nearestPointOnLine(lineString, markerPt, { units: 'meters' });
+                const snappedIndex = snapped.properties.index;
+
+                let refPoint;
+                if (snappedIndex < coords.length - 1) {
+                  refPoint = turf.point(coords[snappedIndex + 1]);
+                } else if (snappedIndex > 0) {
+                  refPoint = turf.point(coords[snappedIndex - 1]);
+                } else {
+                  return;
                 }
+
+                const bearing = turf.bearing(markerPt, refPoint);
+                bearings.push(bearing);
+              });
+
+              if (bearings.length > 0) {
+                let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
+                if (avgBearing < 0) avgBearing += 360;
+                idToDirection[id] = getDirectionFromBearing(avgBearing);
+              }
             }
-        });
+          });
 
         // Process the content
         const processedOutput = processFiberPairsPage5(lines, idToDirection);
@@ -788,12 +919,12 @@ function joinLinesProperties(feature) {
 function getDirectionFromBearing(bearing) {
   if (bearing >= 348.75 || bearing < 11.25) return "N";
   if (bearing >= 11.25 && bearing < 78.75) return "NE";
-  if (bearing >= 78.75 && bearing < 123.75) return "E";
-  if (bearing >= 123.75 && bearing < 168.75) return "SE";
-  if (bearing >= 168.75 && bearing < 213.75) return "S";
-  if (bearing >= 213.75 && bearing < 258.75) return "SW";
-  if (bearing >= 258.75 && bearing < 303.75) return "W";
-  if (bearing >= 303.75 && bearing < 348.75) return "NW";
+  if (bearing >= 78.75 && bearing < 101.25) return "E";
+  if (bearing >= 101.25 && bearing < 168.75) return "SE";
+  if (bearing >= 168.75 && bearing < 191.25) return "S";
+  if (bearing >= 191.25 && bearing < 258.75) return "SW";
+  if (bearing >= 258.75 && bearing < 281.25) return "W";
+  if (bearing >= 281.25 && bearing < 348.75) return "NW";
   return "?";
 }
 
@@ -808,7 +939,7 @@ function escapeHtml(str) {
 // =============================
 // CSV EXPORT BUTTON LISTENER
 // =============================
-/*document.getElementById('downloadBtn').addEventListener('click', () => {
+document.getElementById('downloadBtn').addEventListener('click', () => {
   if (pointFeatures.length === 0) {
     alert("No point GeoJSON loaded yet.");
     return;
@@ -840,7 +971,7 @@ function escapeHtml(str) {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-});*/
+});
 
 document.getElementById('downloadPage5CSV').addEventListener('click', function() {
     try {
