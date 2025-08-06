@@ -3,81 +3,144 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Biarri CSV -> GeoJSON Tool</title>
+    <title>Simplify Biarri Splicing Tool</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+    <style>
+  body {
+    font-family: Arial, sans-serif;
+    max-width: 900px;
+    margin: 20px auto;
+    padding: 10px;
+  }
+  textarea {
+    width: 100%;
+    height: 150px;
+    margin-bottom: 10px;
+    font-family: monospace;
+  }
+  button {
+    padding: 10px 20px;
+    font-size: 16px;
+    margin-right: 10px;
+  }
+  pre {
+    background: #f0f0f0;
+    padding: 10px;
+    white-space: pre-wrap;
+  }
+</style>
     
 </head>
 <body>
-    <h2>Biarri CSV -> Geojson Tool:</h2>
+    <h2>Simplify Biarri Splicing Detail</h2>
     <table style="width: 100%;">
+    <!-- Step 1 -->
+    <tbody id="step1">
         <tr>
             <td colspan="2"><h2>Step 1: Upload ZIP File Containing CSVs</h2></td>
         </tr>
         <tr>
-            <td><input type="file" id="zipFileInput" accept=".zip"></td>
-            <td>
-                <button id="zipActionBtn" onclick="processZip()">Process Splicetable.ZIP</button>
+            <td style="text-align: right;" colspan="2">
+                 <a href="splicing conversion.html" style="text-decoration: none; padding: 8px 12px; background-color: #51ff00; color: rgb(104, 104, 104); border-radius: 5px;">Splicing Conversion Tool</a>
+                <a href="Tombstone Formatting Tool.html" style="text-decoration: none; padding: 8px 12px; background-color: #ffe600; color: rgb(107, 107, 107); border-radius: 5px;">Tombstone Formatting Tool</a>
+                <a href="Direction Tool.html" style="text-decoration: none; padding: 8px 12px; background-color: #ff0000; color: rgb(255, 255, 255); border-radius: 5px;">Direction Tool</a>
+            </td>          
+        </tr>
+        <tr>
+            <td><input type="file" id="zipFileInput" accept=".zip" onchange="processAndConvertZip()" /></td>
+        </tr>
+    </tbody>
+
+    <!-- Step 2 -->
+    <tbody id="step2" style="display: none;">
+        <tr>
+            <td colspan="1"><h3>Input:</h3></td>
+        </tr>
+        <tr>
+            <td style="text-align: center;" colspan="2">
+                <textarea id="inputText" placeholder="Paste your big input text here"></textarea>
             </td>
         </tr>
-        
         <tr>
-            <td colspan="2"><h2>Step 2: Upload Processed ZIP to Convert to GeoJSON</h2></td>
+            <td colspan="1"><h3>Reference (optional)</h3></td>
         </tr>
         <tr>
-            <td><input type="file" id="geoJsonZipInput" accept=".zip"></td>
+            <td style="text-align: center;" colspan="2">
+                <textarea id="referenceText" placeholder="e.g. 288 GP02-14-FOC01(F1-CABLE-0001)"></textarea>
+            </td>
+        </tr>
+        <tr>
             <td>
-                <button id="zipActionBtn1" onclick="processGeoJsonZip()">Process CSV.ZIP</button>
+                <button onclick="convertText()" style="text-decoration: none; padding: 2px 12px; background-color: #ff4bd8; color: white; border-radius: 5px;">Convert</button>
+                
             </td>
         </tr>
         <tr>
             <td style="text-align: right;" colspan="2">
                 <a href="splicing conversion.html" style="text-decoration: none; padding: 8px 12px; background-color: #51ff00; color: rgb(104, 104, 104); border-radius: 5px;">Splicing Conversion Tool</a>
-                
                 <a href="Tombstone Formatting Tool.html" style="text-decoration: none; padding: 8px 12px; background-color: #ffe600; color: rgb(107, 107, 107); border-radius: 5px;">Tombstone Formatting Tool</a>
                 <a href="Direction Tool.html" style="text-decoration: none; padding: 8px 12px; background-color: #ff0000; color: rgb(255, 255, 255); border-radius: 5px;">Direction Tool</a>
             </td>          
         </tr>
+    </tbody>
 
-        <tr>
-            <td colspan="2"><h2>Output</h2></td>
-        </tr>
-        <tr>
-            <td colspan="2"><div id="output"></div></td>
-        </tr>
-    </table>
+    <!-- Output Section -->
+    <tr>
+        <td colspan="2"><h2>Output</h2></td>
+    </tr>
+    <tr>
+        <td colspan="2"><div id="output"></div></td>
+    </tr>
+</table>
 
+    <!-- Add this in your HTML head or before your script -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script>
         let processedFiles = {};
         let geoJsonFeatures = [];
 
-        async function processZip() {
-            const fileInput = document.getElementById("zipFileInput");
-            if (!fileInput.files.length) {
-                alert("Please upload a ZIP file.");
-                return;
-            }
-
-            const zip = new JSZip();
-            const zipFile = fileInput.files[0];
-            const zipData = await zip.loadAsync(zipFile);
-            processedFiles = {};
-
-            for (let fileName in zipData.files) {
-                if (fileName.endsWith(".csv")) {
-                    let csvText = await zipData.files[fileName].async("text");
-                    let cleanedFileName = fileName.replace(/^splices_/, "").replace(/\.[^/.]+$/, "");
-                    let processedCSV = processCSV(csvText, cleanedFileName);
-                    processedFiles[cleanedFileName + ".csv"] = processedCSV;
-                }
-            }
-
-            let button = document.getElementById("zipActionBtn");
-            button.textContent = "Download Processed ZIP";
-            button.onclick = downloadProcessedZip; // Change function after processing
-            
-            displayOutput();
+        function showStep2() {
+            document.getElementById("step1").style.display = "none";
+            document.getElementById("step2").style.display = "table-row-group"; 
         }
+
+        async function processAndConvertZip() {
+    const fileInput = document.getElementById("zipFileInput");
+    if (!fileInput.files.length) {
+        alert("Please upload a ZIP file.");
+        return;
+    }
+
+    const zip = new JSZip();
+    const zipFile = fileInput.files[0];
+    const zipData = await zip.loadAsync(zipFile);
+
+    let csvFiles = [];
+
+    // 🔹 Step 1: Process CSV files (instead of writing ZIP to disk)
+    for (let fileName in zipData.files) {
+        if (fileName.endsWith(".csv")) {
+            let csvText = await zipData.files[fileName].async("text");
+            let cleanedFileName = fileName.replace(/^splices_/, "").replace(/\.[^/.]+$/, "");
+            let processedCSV = processCSV(csvText, cleanedFileName); // your existing logic
+
+            // push into csvFiles array for Step 2
+            csvFiles.push({ name: cleanedFileName + ".csv", data: processedCSV });
+        }
+    }
+
+    // 🔹 Step 2: Convert processed CSVs → GeoJSON → Excel
+    convertToGeoJSON(csvFiles);
+    displayOutput();
+    downloadExcel();  // auto download Excel
+    // ✅ After Excel is downloaded, switch UI to Step 2
+    setTimeout(showStep2, 2000); // give download a moment
+}
+
+
 
         function processCSV(csvText, fileName) {
             const lines = csvText.split("\n").map(line => line.trim()).filter(line => line);
@@ -100,7 +163,7 @@
                 let row = lines[i].split(",").map(value => value.trim());
                 const typeValue = row[typeIndex]?.toLowerCase();
                 const tierValue = row[tierOut]?.toLowerCase();
-                if (typeValue !== "dead" && typeValue !== "spare" && tierValue !== "dedicated_cable") {
+                if (typeValue !== "dead" && typeValue !== "spare" && tierOut !== "dedicated_cable") {
                     let fibreIn = fibreInIndex !== -1 && !isNaN(row[fibreInIndex]) && row[fibreInIndex] !== ""
                             ? "F" + row[fibreInIndex] 
                             : "";
@@ -137,7 +200,7 @@
             });
         }
 
-        async function processGeoJsonZip() {
+        /*async function processGeoJsonZip() {
             const fileInput = document.getElementById("geoJsonZipInput");
             if (!fileInput.files.length) {
                 alert("Please upload the processed ZIP file.");
@@ -151,6 +214,7 @@
 
             let csvFiles = [];
 
+            // 🔹 Read all CSVs from ZIP
             for (let fileName in zipData.files) {
                 if (fileName.endsWith(".csv")) {
                     let csvText = await zipData.files[fileName].async("text");
@@ -158,70 +222,93 @@
                 }
             }
 
+            // 🔹 Convert CSV → GeoJSON features
             convertToGeoJSON(csvFiles);
+
+            // 🔹 Show preview in page
             displayOutput();
+
+            // 🔹 Auto-download Excel
+            downloadExcel();
+        }*/
+
+function convertToGeoJSON(csvFiles) {
+    geoJsonFeatures = [];
+
+    csvFiles.forEach(file => {
+        const lines = file.data.split('\n');
+        if (lines.length < 2) return;
+
+        // use filename (without extension) as hubName
+        const hubName = file.name.replace(/\.[^/.]+$/, "");
+        let formattedStrings = [];
+
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i].split(',');
+            if (line.length < 3) continue;
+
+            const inCable = line[0].trim();
+            const type = line[1].trim();
+            const outCable = line[2].trim();
+
+            if (inCable.toUpperCase() === 'DEAD' || outCable.toUpperCase() === 'DEAD' || 
+                inCable.toUpperCase() === 'SPARE' || outCable.toUpperCase() === 'SPARE') {
+                continue;
+            }
+
+            const formattedString = `In ${inCable} ${type} ${outCable}`;
+            formattedStrings.push(formattedString);
         }
 
-        function convertToGeoJSON(csvFiles) {
-            geoJsonFeatures = [];
-
-            csvFiles.forEach(file => {
-                const lines = file.data.split('\n');
-                if (lines.length < 2) return;
-
-                const hubName = lines[0].split(',')[0].trim();
-                let formattedStrings = [];
-
-                for (let i = 1; i < lines.length; i++) {
-                    const line = lines[i].split(',');
-                    if (line.length < 2) continue;
-
-                    const inCable = line[0].trim();
-                    const type = line[1].trim();
-                    const outCable = line[2].trim();
-
-                    if (inCable.toUpperCase() === 'DEAD' || outCable.toUpperCase() === 'DEAD' || 
-                        inCable.toUpperCase() === 'SPARE' || outCable.toUpperCase() === 'SPARE') {
-                        continue;
-                    }
-
-                    const formattedString = `In ${inCable} ${type} ${outCable}`;
-                    formattedStrings.push(formattedString);
-                }
-
-                if (formattedStrings.length > 0) {
-                    const feature = {
-                        type: "Feature",
-                        properties: {
-                            hubName: hubName,
-                            connections: formattedStrings.join(', ')
-                        },
-                        geometry: {
-                            type: "Point",
-                            coordinates: [0, 0]
-                        }
-                    };
-                    geoJsonFeatures.push(feature);
-                }
-            });
-
-            let button = document.getElementById("zipActionBtn1");
-            button.textContent = "Download Geojson";
-            button.onclick = downloadGeoJSON; // Change function after processing
-        }
-
-        function downloadGeoJSON() {
-            const geoJson = {
-                type: "FeatureCollection",
-                features: geoJsonFeatures
+        if (formattedStrings.length > 0) {
+            const connectionsStr = formattedStrings.join(', ');
+            const feature = {
+                type: "Feature",
+                properties: {
+                    hubName: hubName,
+                    connections: connectionsStr,
+                    Comb: hubName + "/" + connectionsStr + ">"
+                },
+                geometry: { type: "Point", coordinates: [0, 0] }
             };
-
-            const blob = new Blob([JSON.stringify(geoJson, null, 2)], { type: 'application/json' });
-            saveAs(blob, "data.geojson");
-            setTimeout(() => {
-                alert("✅ Processed ZIP file has been downloaded successfully!");
-            }, 1500); // Ensures alert appears AFTER the file download
+            geoJsonFeatures.push(feature);
         }
+    });
+}
+
+function downloadExcel() {
+    if (geoJsonFeatures.length === 0) {
+        alert("No data to export.");
+        return;
+    }
+
+    // Build rows for Excel
+    let rows = geoJsonFeatures.map(feature => ({
+        Hub: feature.properties.hubName,
+        Connections: feature.properties.connections,
+        Comb: feature.properties.Comb
+    }));
+
+    // Convert JSON → worksheet
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+
+    // Create workbook and append worksheet
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Connections");
+
+    // Save file immediately
+    XLSX.writeFile(workbook, "data.xlsx");
+
+    setTimeout(() => {
+        alert("✅ Processed ZIP file has been converted and downloaded as Excel!");
+        alert("🚀 Launching to Tombstone Formatting Tool.html!");
+        window.location.href = "Tombstone Formatting Tool.html";
+    }, 1000);
+}
+
+
+//2nd tool finish
+
 
         function displayOutput() {
             let outputDiv = document.getElementById("output");
