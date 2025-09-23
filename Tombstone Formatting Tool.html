@@ -316,7 +316,7 @@ function downloadGeoJSON() {
   finalRows.forEach(row => {
     let rawLine = row[0] !== undefined ? row[0] : "";
 
-    if (/^[A-Z0-9\-]+$/.test(rawLine.trim())) {
+    if (/^[A-Z0-9\-_]+$/.test(rawLine.trim())) {
       // It's a HUB name like F2-HUB-xxxx
       if (currentFeature) {
         currentFeature.properties.lines = currentLines.join("\n");
@@ -367,6 +367,7 @@ function downloadGeoJSON() {
 </script>
 </body>
 </html>
+
 
 
 
