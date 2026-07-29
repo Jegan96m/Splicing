@@ -232,10 +232,10 @@ if (match) {
 
             // ← updated here
             const label = count > 1 ? "Splitters" : "Splitter";
-            const splitterText = `Out: (${count}) 1x4 Secondary ${label}\n`;
+            const splitterText = `Out: (${count}) 1x4 Secondary ${label}`;
 
             result += `In: ${prefix}F ${fromCableName} ${fromRange}\n`;
-            result += splitterText + "\n";
+            result += splitterText + "\n\n";
             finalRows.push([`In: ${prefix}F ${fromCableName} ${fromRange}`]);
             finalRows.push([splitterText]);
           }
