@@ -9,37 +9,40 @@
     href="https://unpkg.com/leaflet/dist/leaflet.css"
   />
   <style>
-    #map {
-      height: 600px;
-    }
-    .popup-content {
-      width: 350px;
-      height: 250px;
-      overflow-y: auto;
-      white-space: pre-wrap;
-      padding-right: 10px;
-    }
-    .leaflet-popup-content-wrapper {
-      max-width: none !important;
-    }
-    .popup-nav {
-      margin-top: 8px;
-      text-align: center;
-    }
-    .popup-nav button {
-      pointer-events: all;
-    }
-  </style>
+        body {
+            margin: 0;
+            font-family: Arial;
+        }
+
+        #controls {
+            padding: 10px;
+            background: #f5f5f5;
+        }
+
+        #map {
+            height: calc(100vh - 80px);
+            width: 100%;
+        }
+
+        input {
+            margin: 5px;
+        }
+        .leaflet-popup-content {
+            width: 230px;
+            white-space: nowrap;
+        }
+        
+    </style>
 </head>
 <body>
   <h2>Direction Tool:</h2>
   Upload Splicing detail GeoJSON:
-  <input type="file" id="pointGeojson" accept=".geojson,.json" />
+  <input type="file" id="pointFile" accept=".geojson,.json">
   
   Upload Fibers GeoJSON:
-  <input type="file" id="lineGeojson" accept=".geojson,.json" multiple />
+  <input type="file" id="lineFile" accept=".geojson,.json" multiple>
     
-    <button id="downloadPage5CSV"style="text-decoration: none; padding: 2px 12px; background-color: #ff4bd8; color: white; border-radius: 5px;">Download Splicing content</button>
+    <button onclick="downloadGeoJSON()"style="text-decoration: none; padding: 2px 12px; background-color: #ff4bd8; color: white; border-radius: 5px;">Download Splicing content</button>
     <a href="index.html" style="text-decoration: none; padding: 8px 12px; background-color: #00ffdd; color: rgb(104, 104, 104); border-radius: 5px;">Simplify Biarri Splicing Tool</a>
     <a href="Tombstone Formatting Tool.html" style="text-decoration: none; padding: 8px 12px; background-color: #ffe600; color: rgb(107, 107, 107); border-radius: 5px;">Tombstone Formatting Tool</a>
     
@@ -50,874 +53,467 @@
 
   <div id="map"></div>
 
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
- <script>
-let map = L.map('map').setView([0, 0], 2);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-}).addTo(map);
 
-let pointLayer = null;
-let lineLayers = [];
-let allLines = [];
-let pointFeatures = [];
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 
-document.getElementById('pointGeojson').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
+<script>
 
-  const reader = new FileReader();
-  reader.onload = function(evt) {
-    const geojson = JSON.parse(evt.target.result);
-    pointFeatures = geojson.features || [];
+let map = L.map('map').setView([5.4141,100.3288],13);
 
-    if (pointLayer) map.removeLayer(pointLayer);
 
-    pointLayer = L.geoJSON(geojson, {
-      pointToLayer: function(feature, latlng) {
-        return L.circleMarker(latlng, { radius: 6, color: 'red' });
-      },
-      onEachFeature: function(feature, layer) {
-        layer.on('click', () => {
-          showPopup(layer, feature);
-        });
-      }
-    }).addTo(map);
-
-    map.fitBounds(pointLayer.getBounds());
-  };
-  reader.readAsText(file);
-});
-
-document.getElementById('lineGeojson').addEventListener('change', (e) => {
-  [...e.target.files].forEach(file => {
-    const reader = new FileReader();
-    reader.onload = function(evt) {
-      const geojson = JSON.parse(evt.target.result);
-
-      let layer = L.geoJSON(geojson, {
-        style: { color: 'blue' }
-      }).addTo(map);
-
-      lineLayers.push(layer);
-
-      geojson.features.forEach(f => {
-        allLines.push(f);
-      });
-    };
-    reader.readAsText(file);
-  });
-});
-
-function showPopup(layer, feature) {
-  let page = 1;
-  let popup;
-
-  function showPage() {
-    let content;
-    if (page === 1) {
-      content = generatePage1(feature);
-    } else if (page === 2) {
-      content = generatePage2(layer.getLatLng());
-    } else if (page === 3) {
-      content = generatePage3(feature, layer.getLatLng());
+// OpenStreetMap
+L.tileLayer(
+    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {
+        maxZoom:99,
+        attribution:'© OpenStreetMap'
     }
-    else if (page === 4) {
-    content = generatePage4(feature, layer.getLatLng());
-    }
-    else if (page === 5) {
-    content = generatePage5(feature, layer.getLatLng());
-    }
+).addTo(map);
+
+// Lines below
+map.createPane('linePane');
+map.getPane('linePane').style.zIndex = 400;
+
+// Points above
+map.createPane('pointPane');
+map.getPane('pointPane').style.zIndex = 500;
+
+let pointLayer;
+let lineLayer;
+
+let lineFeatures = [];
+let exportedFeatures = [];
+
+function loadGeoJSON(file, type){
+
+    let reader = new FileReader();
+
+    reader.onload = function(e){
+
+        let geojson = JSON.parse(e.target.result);
 
 
-    const html = buildPopupHtml(content);
-    popup.setContent(html);
-    attachToggleListener();
-  }
+        if(type === "point"){
 
-  function togglePage() {
-    page = page === 5 ? 1 : page + 1;
-    showPage();
-  }
-
-  function attachToggleListener() {
-    const btn = document.getElementById('toggleBtn');
-    if (btn) {
-      btn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        togglePage();
-      });
-    }
-  }
-
-  popup = L.popup({
-    maxWidth: 500,
-    minWidth: 350,
-    maxHeight: 300,
-    autoPan: true
-  })
-    .setLatLng(layer.getLatLng())
-    .setContent(buildPopupHtml(generatePage1(feature)))
-    .openOn(map);
-
-  attachToggleListener();
-}
-
-function buildPopupHtml(content) {
-  return `
-    ${content}
-    <div class="popup-nav">
-      <button id="toggleBtn">Toggle Page</button>
-    </div>
-  `;
-}
-
-function generatePage1(feature) {
-  let raw = joinLinesProperties(feature);
-  let rawID = feature.properties.ID || 'NA';
-
-  const formatted = raw
-    .split('\n')
-    .map(line => line.trim() === "" ? "" : escapeHtml(line))
-    .join('<br>');
-
-  return `<div class="popup-content">
-    <strong>Splicing Detail:</strong><br/>
-    <strong>${rawID}:</strong><br>
-    ${formatted}
-  </div>`;
-}
-
-function generatePage2(latlng) {
-  if (allLines.length === 0) {
-    return `<div class="popup-content">(No fiber GeoJSON uploaded yet.)</div>`;
-  }
-
-  const markerPt = turf.point([latlng.lng, latlng.lat]);
-
-  let cablesAtPoint = [];
-
-  allLines.forEach(line => {
-    const lineGeom = turf.lineString(line.geometry.coordinates);
-    const snapped = turf.nearestPointOnLine(lineGeom, markerPt);
-    const dist = snapped.properties.dist;
-    if (dist < 0.0001) {
-      const bearing = turf.bearing(markerPt, snapped);
-      let direction = getDirectionFromBearing(bearing);
-      cablesAtPoint.push({
-        id: line.properties?.ID || "(Unknown)",
-        direction: direction
-      });
-    }
-  });
-
-  if (cablesAtPoint.length === 0) {
-    return `<div class="popup-content">No cables intersecting at this marker.</div>`;
-  }
-
-  let html = `<div class="popup-content"><strong>Cables intersecting here:</strong><ul>`;
-  cablesAtPoint.forEach(c => {
-    html += `<li>${c.id} (${c.direction})</li>`;
-  });
-  html += `</ul></div>`;
-  return html;
-}
-
-function generatePage3(feature, latlng) {
-  let rawID = feature.properties.ID || 'NA';
-  let raw = joinLinesProperties(feature);
-
-  const markerPt = turf.point([latlng.lng, latlng.lat]);
-  const idRegex = /[A-Z0-9\-]+-FOC\d+|Stub/g;
-
-  const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
-
-  const idToDirection = {};
-  idsInText.forEach(id => {
-    const matchingLines = allLines.filter(line => {
-      const propId = line.properties?.ID;
-      if (!propId) return false;
-      if (id === 'Stub') return propId.includes('Stub'); // Match anything containing 'Stub'
-      return propId === id;
-    });
-
-     if (matchingLines.length > 0) {
-    let bearings = [];
-
-    matchingLines.forEach(line => {
-      const coords = line.geometry.coordinates;
-      if (coords.length < 2) return;
-
-      const lineString = turf.lineString(coords);
-      const snapped = turf.nearestPointOnLine(lineString, markerPt, { units: 'meters' });
-      const snappedIndex = snapped.properties.index;
-
-      let refPoint;
-      if (snappedIndex < coords.length - 1) {
-        refPoint = turf.point(coords[snappedIndex + 1]);
-      } else if (snappedIndex > 0) {
-        refPoint = turf.point(coords[snappedIndex - 1]);
-      } else {
-        return;
-      }
-
-      const bearing = turf.bearing(markerPt, refPoint);
-      bearings.push(bearing);
-    });
-
-    if (bearings.length > 0) {
-      let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
-      if (avgBearing < 0) avgBearing += 360;
-      idToDirection[id] = getDirectionFromBearing(avgBearing);
-    }
-  }
-});
-
-  const lines = raw.split('\n');
-  const newLines = lines.map(line => {
-    let newLine = line;
-    let replacedIDs = new Set();
-
-    for (const id of idsInText) {
-      if (replacedIDs.has(id)) continue;
-
-      if (newLine.includes(id)) {
-        const regex = new RegExp(`(${id})(\\s*\\([^)]+\\))?`);
-        newLine = newLine.replace(regex, (match, idPart, rangePart) => {
-          let dir = idToDirection[id] ? ` ${idToDirection[id]}` : '';
-          const focMatch = idPart.match(/FOC\d+/);
-          const shortId = focMatch ? focMatch[0] : idPart;
-
-          // Stub override directions
-          const isIn = raw.includes(`In: ${line}`);
-          const isOut = raw.includes(`Out: ${line}`);
-          if (id === 'Stub') {
-            if (line.startsWith('In:')) dir = ' NE';
-            else if (line.startsWith('Out:')) dir = ' NW';
-          }
-
-          return shortId + (rangePart || '') + dir;
-        });
-        replacedIDs.add(id);
-      }
-    }
-
-    return newLine.trim() === "" ? "" : escapeHtml(newLine);
-  });
-
-  const formatted = newLines.join('<br>');
-
-  return `<div class="popup-content">
-    <strong>Splicing Detail (with directions):</strong><br/>
-    <strong>${rawID}:</strong><br>
-    ${formatted}
-  </div>`;
-}
-
-
-function generatePage4(feature, latlng) {
-    const rawID = feature.properties?.ID || 'NA';
-    const raw = joinLinesProperties(feature);
-    const lines = raw.split('\n');
-
-    // === Reuse Page 3's direction logic ===
-    const markerPt = turf.point([latlng.lng, latlng.lat]);
-    const idRegex = /[A-Z0-9\-]+-FOC\d+|Stub/g;
-    const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
-
-    const idToDirection = {};
-    idsInText.forEach(id => {
-        const matchingLines = allLines.filter(line => {
-    const propId = line.properties?.ID;
-    if (!propId) return false;
-    if (id === 'Stub') return propId.includes('Stub'); // Match anything containing 'Stub'
-    return propId === id;
-  });
-        if (matchingLines.length > 0) {
-            let bearings = [];
-            matchingLines.forEach(line => {
-                const coords = line.geometry.coordinates;
-                coords.forEach(coord => {
-                    const pt = turf.point(coord);
-                    const bearing = turf.bearing(markerPt, pt);
-                    bearings.push(bearing);
-                });
-            });
-            if (bearings.length > 0) {
-                let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
-                if (avgBearing < 0) avgBearing += 360;
-                idToDirection[id] = getDirectionFromBearing(avgBearing); // "N", "S", etc.
+            if(pointLayer){
+                map.removeLayer(pointLayer);
             }
-        }
-    });
 
-    // Process pairs WITH directions
-    const processedOutput = processFiberPairs(lines, idToDirection);
-
-    // Format output
-    const formattedOutput = processedOutput
-        .map(line => line.trim() === "" ? "" : escapeHtml(line))
-        .join('<br>');
-
-    return `
-        <div class="popup-content" style="text-align: left;">
-            <strong>Fiber Pattern Processor Results:</strong><br>
-            <div style="margin-left: 0;"><strong>${rawID}:</strong></div>
-            <div style="text-align: left;">${formattedOutput}</div>
-        </div>`;
-}
-
-// Updated to accept directions
-function processFiberPairs(lines, idToDirection = {}) {
-    const pairs = [];
-    let currentPair = null;
-
-    // Parse into In/Out pairs
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('In:')) {
-            if (currentPair) pairs.push(currentPair);
-            currentPair = { in: trimmed, out: null };
-        } else if (trimmed.startsWith('Out:')) {
-            if (currentPair) currentPair.out = trimmed;
-        }
-    }
-
-    
-    if (currentPair) pairs.push(currentPair);
-
-    // Process pairs with directions
-    let processed = [];
-    let i = 0;
-    while (i < pairs.length) {
-    const current = pairs[i];
-    const next = pairs[i + 1];
-
-    const getFocId = (str) => str.match(/[A-Z0-9\-]+-FOC\d+/i)?.[0] || (str.includes('Stub') ? 'Stub' : undefined);
-
-    // Determine direction for current.in
-    const focId = getFocId(current.in);
-    let direction = '';
-    if (focId === 'Stub') {
-        direction = 'NE';
-    } else if (focId) {
-        direction = idToDirection[focId] || '';
-    }
-
-
-    if (next && next.out && next.out.includes('Splitter')) {
-        const currentRange = extractRange(current.in);
-        const nextRange = extractRange(next.in);
-
-        if (currentRange && nextRange && currentRange.end + 1 === nextRange.start) {
-            // --- Combine current In range ---
-            const combined = {
-                in: `${current.in.split('(')[0].trim()} (${currentRange.start}-${nextRange.end}) ${direction}`.trim(),
-                out: current.out
-            };
-            // Add direction to combined.out (current.out content)
-            const currentOutId = getFocId(current.out);
-            const currentOutDir = currentOutId ? idToDirection[currentOutId] || direction : direction;
-            if (current.out) {
-                if (currentOutId) {
-                    combined.out = current.out.replace(/(\))/, `) ${currentOutDir}`).trim();
-                } else {
-                    combined.out = current.out.trim() + ` ${currentOutDir}`;
+            // prepare GeoJSON export structure
+            exportedFeatures = geojson.features.map(f => ({
+                type:"Feature",
+                geometry:f.geometry,
+                properties:{
+                    Handhole_ID:f.properties.ID ?? "",
+                    Page4_Content:""
                 }
-            }
+            }));
+
+            pointLayer = L.geoJSON(geojson,{
+
+                
+                
+                pointToLayer:function(feature,latlng){
+
+                    return L.circleMarker(latlng,{
+                        pane: 'pointPane',
+                        radius:6,
+                        color:"blue",
+                        fillColor:"cyan",
+                        fillOpacity:0.8
+                    });
+
+                },
+
+                onEachFeature:function(feature,layer){
+
+                    let p = feature.properties;
+
+                    let page1 = `
+                        <b>${p["ID"] ?? ""}</b><br>
+                        <b>${p["Tier Rating"] ?? ""} ${p["Size"] ?? ""}</b>
+                    `;
+
+
+                    if(p["Spec_1"] != null && p["Spec_1"] !== ""){
+
+                        page1 += `
+                            <br>
+                            <b>${p["Spec_1"]}</b><br>
+                            ${p["lines"]?.replace(/\n/g, "<br>") ?? ""}
+                            </p>
+                        `;
+
+                    }
+
+
+                    if(p["Spec_2"] != null && p["Spec_2"] !== ""){
+
+                        page1 += `
+                            <br>
+                            <b>${p["Spec_2"]}</b><br>
+                            ${p["lines_2"]?.replace(/\n/g, "<br>") ?? ""}
+                            </p>
+                        `;
+
+                    }
+
+
+                    if(p["Spec_3"] != null && p["Spec_3"] !== ""){
+
+                        page1 += `
+                            <br>
+                            <b>${p["Spec_3"]}</b><br>
+                            ${p["lines_3"]?.replace(/\n/g, "<br>") ?? ""}
+                            </p>
+                        `;
+
+                    }
+
+
+                    // POPUP WITH PAGES
+                    let popupContent = `
+
+                        <div class="page1">
+                            ${page1}
+                        </div>
+
+                        <div class="page2" style="display:none;">
+                            Loading cables...
+                        </div>
+
+                        <div class="page3" style="display:none;">
+                            Loading connection...
+                        </div>
+
+                        <div class="page4" style="display:none;">
+                            ${exportedFeatures.find(
+                                f => f.properties.Handhole_ID === p["ID"]
+                            )?.properties.Page4_Content ?? ""}
+                        </div>
+
+                        <button onclick="showPage(this,1)">1</button>
+                        <button onclick="showPage(this,2)">2</button>
+                        <button onclick="showPage(this,3)">3</button>
+                        <button onclick="showPage(this,4)">4</button>
+                    `;
+
+
+                    layer.bindPopup(popupContent);
+
+                    layer.on('popupopen', function(){
+
+                        let cables = getIntersectingCables(
+                            layer.getLatLng()
+                        );
+
+                        let cableDirectionMap = {};
+
+                        let page2 = "";
+
+
+                        if(cables.length > 0){
+
+                            cables.forEach(function(cable){
+
+                                let cableID = cable.properties.ID ?? "";
+
+                               let direction = getCableDirection(
+                                    cable,
+                                    layer.getLatLng()
+                                );
+
+                                cableDirectionMap[cableID] = direction;
+
+                                page2 += `
+                                <p>
+                                <b>${cableID}</b>
+                                ${cableID.includes("Stub") ? "" : direction}
+                                </p>
+                            `;
+
+                            });
+
+                        }
+                        else{
+
+                            page2 = "No cables intersecting this point";
+
+                        }
+
+                        let page3 = page1;
+
+
+                        cables.forEach(function(cable){
+
+                            let cableID = cable.properties.ID ?? "";
+
+                            // Skip Stub cables
+                            if(cableID.toLowerCase().includes("stub")){
+                                return;
+                            }
+
+                            let direction = getCableDirection(
+                                cable,
+                                layer.getLatLng()
+                            );
+
+
+                            //let cableID = cable.properties.ID;
+
+
+                            let regex = new RegExp(
+                                "(" + cableID + "\\s*\\([^)]*\\))",
+                                "g"
+                            );
+
+
+                            page3 = page3.replace(
+                                regex,
+                                "$1 " + direction
+                            );
+
+
+                        });
+
+                        
+
+                        let popup = layer.getPopup().getElement();
+
+                    popup.querySelector(".page2").innerHTML = page2;
+                    popup.querySelector(".page3").innerHTML = page3;
+                    let page4 = createPage4(page3);
+                        
+
+                    
+
+                    });
+
+                }
+
+            }).addTo(map);
+
+
+            fitMap(pointLayer);
+
+        }
+
+
+
+        if(type === "line"){
+
+            let geojson = JSON.parse(e.target.result);
+            lineFeatures.push(...geojson.features);
             
 
-            // --- Add direction to next.in ---
-            const nextInId = getFocId(next.in);
-            let nextInDir = '';
-            if (nextInId === 'Stub') {
-              // Assign your desired fixed direction for Stub, e.g., 'NE'
-              nextInDir = 'NE';
-            } else if (nextInId) {
-              nextInDir = idToDirection[nextInId] || direction;
-            } else {
-              nextInDir = direction;
-            }
-            next.in = next.in.replace(/(\))/, `) ${nextInDir}`).trim();
 
-            // --- Add direction to next.out (splitter) ---
-            const nextOutId = getFocId(next.out);
-            const nextOutDir = nextOutId ? idToDirection[nextOutId] || direction : direction;
-            if (next.out) {
-                if (nextOutId) {
-                    next.out = next.out.replace(/(\))/, `) ${nextOutDir}`).trim();
-                } else {
-                    next.out = next.out.trim() ;
+            lineLayer = L.geoJSON(geojson,{
+
+                pane: 'linePane',
+
+                style:{
+                    color:"red",
+                    weight:4
+                },
+
+
+                onEachFeature:function(feature,layer){
+
+                    layer.bindPopup(
+                        JSON.stringify(
+                            feature.properties,
+                            null,
+                            2
+                        )
+                    );
+
                 }
+
+
+            }).addTo(map);
+
+
+            fitMap(lineLayer);
+
+        }
+
+
+    };
+
+
+    reader.readAsText(file);
+
+}
+
+
+
+function fitMap(layer){
+
+    let bounds = layer.getBounds();
+
+    if(bounds.isValid()){
+        map.fitBounds(bounds,{
+            padding:[20,20]
+        });
+    }
+
+}
+
+function showPage(btn, page){
+
+    let popup = btn.closest(".leaflet-popup-content");
+
+
+    let page1 = popup.querySelector(".page1");
+    let page2 = popup.querySelector(".page2");
+    let page3 = popup.querySelector(".page3");
+    let page4 = popup.querySelector(".page4");
+
+    if(page === 1){
+
+    page1.style.display = "block";
+    page2.style.display = "none";
+    page3.style.display = "none";
+    page4.style.display = "none";
+
+    }
+
+
+    if(page === 2){
+
+        page1.style.display = "none";
+        page2.style.display = "block";
+        page3.style.display = "none";
+        page4.style.display = "none";
+
+    }
+
+
+    if(page === 3){
+
+        page1.style.display = "none";
+        page2.style.display = "none";
+        page3.style.display = "block";
+        page4.style.display = "none";
+
+    }
+
+    if(page === 4){
+
+    page1.style.display = "none";
+    page2.style.display = "none";
+    page3.style.display = "none";
+    page4.style.display = "block";
+
+}
+
+}
+
+function getIntersectingCables(latlng){
+
+    let point = turf.point([
+        latlng.lng,
+        latlng.lat
+    ]);
+
+    let cables = [];
+
+
+    lineFeatures.forEach(function(feature){
+
+        let line = turf.lineString(
+            feature.geometry.coordinates
+        );
+
+
+        let distance = turf.pointToLineDistance(
+            point,
+            line,
+            {
+                units:"meters"
             }
+        );
 
-           
 
-            processed.push(combined);
-            processed.push(next);
-            i += 2;
-            continue;
-        }
-    }
+        if(distance <= 10){
 
-    // Add direction to current.in
-    if (focId && direction) {
-        current.in = current.in.replace(/(\))/, `) ${direction}`).trim();
-    }
+            cables.push(feature);
 
-    // Always add direction to current.out if it contains FOC ID
-    const outId = getFocId(current.out || '');
-    let outDir = '';
-    if (outId === 'Stub') {
-        outDir = 'NW';
-    } else if (outId) {
-        outDir = idToDirection[outId] || direction;
-    } else {
-        outDir = direction;
-    }
-
-    if (current.out) {
-        if (outId) {
-            current.out = current.out.replace(/(\))/, `) ${outDir}`).trim();
-        } else {
-            current.out = current.out.trim() + ` ${direction}`;
-        }
-    }
-     // === Add (Passthrough) if in and out fiber ranges match ===
-        const inRange = extractRange(current.in);
-        const outRange = extractRange(current.out);
-        const inFiberCount = current.in.match(/\b\d+F\b/)?.[0];
-        const outFiberCount = current.out?.match(/\b\d+F\b/)?.[0];
-        const outText = (current.out || '').toLowerCase();
-        const isSplitter = outText.includes('splitter')
-        if (
-            inRange &&
-            outRange &&
-            inRange.start === outRange.start &&
-            inRange.end === outRange.end &&
-            !isSplitter &&
-            inFiberCount &&
-            outFiberCount &&
-            inFiberCount === outFiberCount
-        ) {
-            current.out += '\n(Passthrough)';
         }
 
-    processed.push(current);
-    i++;
-}
-
-
-    // Convert to lines
-    let result = [];
-    for (const pair of processed) {
-        result.push(pair.in);
-        result.push(pair.out || '');
-        result.push(''); // Space between pairs
-    }
-    if (result.length > 0 && result[result.length - 1] === '') {
-        result.pop(); // Remove trailing empty line
-    }
-    return result;
-}
-
-// Helper function to extract ranges
-function extractRange(inputStr) {
-    const singleMatch = inputStr.match(/\((\d+)\)$/);
-    if (singleMatch) {
-        const num = parseInt(singleMatch[1]);
-        return { start: num, end: num };
-    }
-    
-    const rangeMatch = inputStr.match(/\((\d+)-(\d+)\)$/);
-    if (rangeMatch) {
-        return {
-            start: parseInt(rangeMatch[1]),
-            end: parseInt(rangeMatch[2])
-        };
-    }
-    
-    return null;
-}
-function extractRange(line) {
-    const match = line.match(/\((\d+)(?:-(\d+))?\)/);
-    if (!match) return null;
-    const start = parseInt(match[1], 10);
-    const end = match[2] ? parseInt(match[2], 10) : start;
-    return { start, end };
-}
-
-
-function generatePage5(feature, latlng) {
-    const rawID = feature.properties?.ID || 'NA';
-    const raw = joinLinesProperties(feature);
-    const lines = raw.split('\n');
-
-    // Direction logic from Page 3
-    const markerPt = turf.point([latlng.lng, latlng.lat]);
-    const idRegex = /[A-Z0-9\-]+-FOC\d+|Stub/g;
-    const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
-
-    const idToDirection = {};
-    idsInText.forEach(id => {
-        const matchingLines = allLines.filter(line => {
-    const propId = line.properties?.ID;
-    if (!propId) return false;
-    if (id === 'Stub') return propId.includes('Stub'); // Match anything containing 'Stub'
-    return propId === id;
-  });
-        if (matchingLines.length > 0) {
-    let bearings = [];
-
-    matchingLines.forEach(line => {
-      const coords = line.geometry.coordinates;
-      if (coords.length < 2) return;
-
-      const lineString = turf.lineString(coords);
-      const snapped = turf.nearestPointOnLine(lineString, markerPt, { units: 'meters' });
-      const snappedIndex = snapped.properties.index;
-
-      let refPoint;
-      if (snappedIndex < coords.length - 1) {
-        refPoint = turf.point(coords[snappedIndex + 1]);
-      } else if (snappedIndex > 0) {
-        refPoint = turf.point(coords[snappedIndex - 1]);
-      } else {
-        return;
-      }
-
-      const bearing = turf.bearing(markerPt, refPoint);
-      bearings.push(bearing);
     });
 
-    if (bearings.length > 0) {
-      let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
-      if (avgBearing < 0) avgBearing += 360;
-      idToDirection[id] = getDirectionFromBearing(avgBearing);
-    }
-  }
-});
 
-    // Run processor for simplified names
-    const processedOutput = processFiberPairsPage5(lines, idToDirection);
+    return cables;
 
-    const formattedOutput = processedOutput
-        .map(line => line.trim() === "" ? "" : escapeHtml(line))
-        .join('<br>');
-
-    return `
-        <div class="popup-content" style="text-align: left;">
-            <strong>Splicing Content:</strong><br>
-            <div style="margin-left: 0;"><strong>${rawID}:</strong></div>
-            <div style="text-align: left;">${formattedOutput}</div>
-        </div>`;
 }
 
-function simplifyCableName(full) {
-   
-    const match = full.match(/FOC\d+/i);
-    return match ? match[0] : full;
+function getCableDirection(feature, latlng){
+
+    let coords = feature.geometry.coordinates;
+
+
+    let point = turf.point([
+        latlng.lng,
+        latlng.lat
+    ]);
+
+
+    let start = turf.point(coords[0]);
+    let end = turf.point(coords[coords.length-1]);
+
+
+    let distStart = turf.distance(
+        point,
+        start,
+        {units:"meters"}
+    );
+
+
+    let distEnd = turf.distance(
+        point,
+        end,
+        {units:"meters"}
+    );
+
+
+    let bearing;
+
+
+    // near start point
+    if(distStart < distEnd){
+
+        bearing = turf.bearing(
+            turf.point(coords[0]),
+            turf.point(coords[1])
+        );
+
+    }
+
+    // near end point
+    else{
+
+        bearing = turf.bearing(
+            turf.point(coords[coords.length-1]),
+            turf.point(coords[coords.length-2])
+        );
+
+    }
+
+
+    return bearingToDirection(bearing);
+
 }
 
-function processFiberPairsPage5(lines, idToDirection = {}) {
-    const pairs = [];
-    let currentPair = null;
+function bearingToDirection(bearing){
 
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('In:')) {
-            if (currentPair) pairs.push(currentPair);
-            currentPair = { in: trimmed, out: null };
-        } else if (trimmed.startsWith('Out:')) {
-            if (currentPair) currentPair.out = trimmed;
-        }
-    }
-    if (currentPair) pairs.push(currentPair);
-
-    const getFocId = (str) => {
-  const match = str.match(/[A-Z0-9\-]+-FOC\d+/i);
-  if (match) return match[0];
-
-  // Fallback: extract cable name before the fiber range
-  const fallback = str.match(/\d+F\s+([^\(]+)/i);
-  return fallback ? fallback[1].trim() : undefined;
-};
-
-
-    let processed = [];
-    let i = 0;
-
-    while (i < pairs.length) {
-        const current = pairs[i];
-        const next = pairs[i + 1];
-
-        const getFocId = (str) => str.match(/[A-Z0-9\-]+-FOC\d+/i)?.[0] || (str.includes('Stub') ? 'Stub' : undefined);
-        // Determine direction for current.in
-        const focId = getFocId(current.in);
-        let direction = '';
-        if (focId === 'Stub') {
-            direction = 'NE';
-        } else if (focId) {
-            direction = idToDirection[focId] || '';
-        }
-
-        if (next && next.out && next.out.includes('Splitter')) {
-            const currentRange = extractRange(current.in);
-            const nextRange = extractRange(next.in);
-
-           if (currentRange && nextRange && currentRange.end + 1 === nextRange.start) {
-              const simplifiedIn = simplifyCableName(focId);
-              const fibreInfo = current.in.match(/\b\d+F\b/)?.[0] || '';
-              const combined = {
-                  in: `In: ${fibreInfo} ${simplifiedIn} (${currentRange.start}-${nextRange.end}) ${direction}`,
-                  out: current.out
-              };
-
-                // Add direction to current.out if not a splitter
-                const outId = getFocId(current.out || '');
-                let outDir = '';
-                if (outId === 'Stub') {
-                    outDir = 'NW';
-                } else if (outId) {
-                    outDir = idToDirection[outId] || direction;
-                } else {
-                    outDir = direction;
-                }
-                if (outId) {
-                    const simplifiedOut = simplifyCableName(outId);
-                    combined.out = current.out.replace(outId, simplifiedOut).replace(/(\))/, `) ${outDir}`);
-                }
-
-                // Clean next.in (simplify and add direction)
-                // --- Add direction to next.in ---
-                const nextInId = getFocId(next.in);
-                let nextInDir = '';
-                if (nextInId === 'Stub') {
-                  // Assign your desired fixed direction for Stub, e.g., 'NE'
-                  nextInDir = 'NE';
-                } else if (nextInId) {
-                  nextInDir = idToDirection[nextInId] || direction;
-                } else {
-                  nextInDir = direction;
-                }
-                if (nextInId) {
-                    const simplifiedNextIn = simplifyCableName(nextInId);
-                    next.in = next.in.replace(nextInId, simplifiedNextIn).replace(/(\))/, `) ${direction}`);
-                }
-
-                // Clean next.out (splitter → no direction)
-                const nextOutId = getFocId(next.out);
-                if (nextOutId) {
-                    const simplifiedNextOut = simplifyCableName(nextOutId);
-                    next.out = next.out.replace(nextOutId, simplifiedNextOut).replace(/(\))/, `) ${direction}`);
-                } else {
-                    next.out = next.out.trim(); // No direction for Splitters
-                }
-
-                processed.push(combined);
-                processed.push(next);
-                i += 2;
-                continue;
-            }
-        }
-
-        // Default: Add direction to current.in
-        if (focId && direction) {
-            current.in = current.in.replace(focId, simplifyCableName(focId)).replace(/(\))/, `) ${direction}`);
-        }
-
-        // Add direction to current.out if NOT Splitter
-        const outId = getFocId(current.out || '');
-        let outDir = '';
-        if (outId === 'Stub') {
-            outDir = 'NW';
-        } else if (outId) {
-            outDir = idToDirection[outId] || direction;
-        } else {
-            outDir = direction;
-        }
-
-        if (current.out) {
-            if (outId) {
-                const simplifiedOut = simplifyCableName(outId);
-                current.out = current.out.replace(outId, simplifiedOut).replace(/(\))/, `) ${outDir}`);
-            } else {
-                current.out = current.out.trim(); // Splitters: no direction
-            }
-        }
-
-     
-     // === Add (Passthrough) if in and out fiber ranges match ===
-        const inRange = extractRange(current.in);
-        const outRange = extractRange(current.out);
-        const inFiberCount = current.in.match(/\b\d+F\b/)?.[0];
-        const outFiberCount = current.out?.match(/\b\d+F\b/)?.[0];
-        const outText = (current.out || '').toLowerCase();
-        const isSplitter = outText.includes('splitter')
-        if (
-            inRange &&
-            outRange &&
-            inRange.start === outRange.start &&
-            inRange.end === outRange.end &&
-            !isSplitter &&
-            inFiberCount &&
-            outFiberCount &&
-            inFiberCount === outFiberCount
-        ) {
-            current.out +=  '\n<strong>(Passthrough)</strong>';
-        }
-
-        processed.push(current);
-        i++;
+    if(bearing < 0){
+        bearing += 360;
     }
 
-    let result = [];
-    for (const pair of processed) {
-        result.push(pair.in);
-        result.push(pair.out || '');
-        result.push('');
-    }
-    if (result.length > 0 && result[result.length - 1] === '') result.pop();
-    return result;
-}
 
-
-
-
-// This returns plain text content only (no HTML tags)
-function generatePage3ContentOnly(feature, latlng) {
-  let raw = joinLinesProperties(feature);
-  const markerPt = turf.point([latlng.lng, latlng.lat]);
-
-  const idRegex = /[A-Z0-9\-]+-FOC\d+/g;
-  const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
-
-  const idToDirection = {};
-  idsInText.forEach(id => {
-    const matchingLines = allLines.filter(line => line.properties?.ID === id);
-    if (matchingLines.length > 0) {
-      let bearings = [];
-      matchingLines.forEach(line => {
-        const coords = line.geometry.coordinates;
-        coords.forEach(coord => {
-          const pt = turf.point(coord);
-          const bearing = turf.bearing(markerPt, pt);
-          bearings.push(bearing);
-        });
-      });
-      if (bearings.length > 0) {
-        let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
-        if (avgBearing < 0) avgBearing += 360;
-        let dir = getDirectionFromBearing(avgBearing);
-        idToDirection[id] = dir;
-      }
-    }
-  });
-
-  const lines = raw.split('\n');
-  const newLines = lines.map(line => {
-    let newLine = line;
-    let replacedIDs = new Set();
-
-    for (const id of idsInText) {
-      if (replacedIDs.has(id)) continue;
-
-      if (newLine.includes(id)) {
-        const regex = new RegExp(`(${id})(\\s*\\([^)]+\\))?`);
-        newLine = newLine.replace(regex, (match, idPart, rangePart) => {
-          const dir = idToDirection[id] ? ` ${idToDirection[id]}` : '';
-          const focMatch = idPart.match(/FOC\d+/);
-          const shortId = focMatch ? focMatch[0] : idPart;
-          return shortId + (rangePart || '') + dir;
-        });
-        replacedIDs.add(id);
-      }
-    }
-    return newLine;
-  });
-
-  return newLines.join('\n');
-}
-
-// Add this function to generate Page 5 content as plain text
-function generatePage5ContentOnly(feature, latlng) {
-    try {
-        
-        const raw = joinLinesProperties(feature);
-        const lines = raw.split('\n');
-
-        // Direction logic
-        const markerPt = turf.point([latlng.lng, latlng.lat]);
-        const idRegex = /[A-Z0-9\-]+-FOC\d+|Stub/g;
-        const idsInText = [...new Set([...raw.matchAll(idRegex)].map(m => m[0]))];
-
-        const idToDirection = {};
-        idsInText.forEach(id => {
-            const matchingLines = allLines.filter(line => {
-    const propId = line.properties?.ID;
-    if (!propId) return false;
-    if (id === 'Stub') return propId.includes('Stub'); // Match anything containing 'Stub'
-    return propId === id;
-  });
-            if (matchingLines.length > 0) {
-              let bearings = [];
-
-              matchingLines.forEach(line => {
-                const coords = line.geometry.coordinates;
-                if (coords.length < 2) return;
-
-                const lineString = turf.lineString(coords);
-                const snapped = turf.nearestPointOnLine(lineString, markerPt, { units: 'meters' });
-                const snappedIndex = snapped.properties.index;
-
-                let refPoint;
-                if (snappedIndex < coords.length - 1) {
-                  refPoint = turf.point(coords[snappedIndex + 1]);
-                } else if (snappedIndex > 0) {
-                  refPoint = turf.point(coords[snappedIndex - 1]);
-                } else {
-                  return;
-                }
-
-                const bearing = turf.bearing(markerPt, refPoint);
-                bearings.push(bearing);
-              });
-
-              if (bearings.length > 0) {
-                let avgBearing = bearings.reduce((a, b) => a + b, 0) / bearings.length;
-                if (avgBearing < 0) avgBearing += 360;
-                idToDirection[id] = getDirectionFromBearing(avgBearing);
-              }
-            }
-          });
-
-        // Process the content
-        const processedOutput = processFiberPairsPage5(lines, idToDirection);
-        return processedOutput.join('\n');
-    } catch (e) {
-        console.error("Error generating Page5 content:", e);
-        return "Error generating content";
-    }
-}
-
-
-function joinLinesProperties(feature) {
-  const fields = [
-    feature.properties?.lines,
-    feature.properties?.lines_1,
-    feature.properties?.lines_2,
-    feature.properties?.lines_3,
-    feature.properties?.lines_4
-  ];
-
-  return fields
-    .filter(x => x && x.trim() !== "")
-    .join('\n\n');
-}
-
-function getDirectionFromBearing(bearing) {
-  if (bearing >= 348.75 || bearing < 11.25) return "N";
+    if (bearing >= 348.75 || bearing < 11.25) return "N";
   if (bearing >= 11.25 && bearing < 78.75) return "NE";
   if (bearing >= 78.75 && bearing < 101.25) return "E";
   if (bearing >= 101.25 && bearing < 168.75) return "SE";
@@ -925,112 +521,387 @@ function getDirectionFromBearing(bearing) {
   if (bearing >= 191.25 && bearing < 258.75) return "SW";
   if (bearing >= 258.75 && bearing < 281.25) return "W";
   if (bearing >= 281.25 && bearing < 348.75) return "NW";
-  return "?";
+
+
 }
 
-function escapeHtml(str) {
-  return str
-    .replace(/&/g, "&amp;")
-  
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+function mergeCableRanges(content){
+
+    let lines = content.split("<br>");
+
+    let result = [];
+
+    let skipIndexes = new Set();
+
+
+    for(let i = 0; i < lines.length; i++){
+
+
+        if(skipIndexes.has(i)){
+            continue;
+        }
+
+
+        let current = lines[i];
+
+
+        let currentMatch = current.match(
+            /(In:|Out:)\s*(.*?)\s\((\d+)(?:-(\d+))?\)\s*([A-Z]+)/
+        );
+
+
+        if(currentMatch){
+
+
+            let nextIndex = i + 1;
+
+
+            // find next In:
+            while(
+                nextIndex < lines.length &&
+                !lines[nextIndex].startsWith("In:")
+            ){
+                nextIndex++;
+            }
+
+
+            let next = lines[nextIndex];
+
+
+            let nextMatch = next?.match(
+                /(In:|Out:)\s*(.*?)\s\((\d+)(?:-(\d+))?\)\s*([A-Z]+)/
+            );
+
+            let nextOut = lines[nextIndex + 1] ?? "";
+
+            if(nextMatch){
+
+
+                let currentStart = Number(currentMatch[3]);
+
+                let currentEnd = Number(
+                    currentMatch[4] ?? currentMatch[3]
+                );
+
+
+                let nextStart = Number(nextMatch[3]);
+
+                let nextEnd = Number(
+                    nextMatch[4] ?? nextMatch[3]
+                );
+
+
+
+                // same cable + same direction + continuous fiber
+                if(
+                    currentMatch[2] === nextMatch[2] &&
+                    currentMatch[5] === nextMatch[5] &&
+                    nextStart === currentEnd + 1  &&
+                    nextOut.includes("Splitter")
+                ){
+
+
+                    result.push(
+                        currentMatch[1] +
+                        " " +
+                        currentMatch[2] +
+                        " ("+
+                        currentStart +
+                        "-" +
+                        nextEnd +
+                        ") " +
+                        currentMatch[5]
+                    );
+
+
+                    // remove passthrough after the first Out cable
+                    if(
+                        lines[i+2] &&
+                        lines[i+2].trim() === "(Passthrough)"
+                    ){
+
+                        skipIndexes.add(i+2);
+
+                    }
+
+
+                    
+
+
+                    // remove old second In line
+                    //skipIndexes.add(nextIndex);
+
+
+                    continue;
+
+                }
+
+            }
+
+        }
+
+
+        result.push(current);
+
+    }
+
+
+    return result.join("<br>");
+
 }
 
-// =============================
-// CSV EXPORT BUTTON LISTENER
-// =============================
-/*document.getElementById('downloadBtn').addEventListener('click', () => {
-  if (pointFeatures.length === 0) {
-    alert("No point GeoJSON loaded yet.");
-    return;
-  }
+function parseFiberRange(line){
 
-  let csvRows = [];
-  csvRows.push(["rawID", "SplicingDetail_Text"]);
+    let match = line.match(
+        /(In:|Out:)\s*(.*?)\s\((\d+)(?:-(\d+))?\)/
+    );
 
-  pointFeatures.forEach(feature => {
-    const rawID = feature.properties?.ID || "NA";
-    const latlng = feature.geometry?.coordinates
-      ? L.latLng(feature.geometry.coordinates[1], feature.geometry.coordinates[0])
-      : L.latLng(0,0);
 
-    let content = generatePage3ContentOnly(feature, latlng);
-    // collapse any 3+ newlines to just 2
-    content = content.replace(/\n{3,}/g, '\n\n');
-    const cleanContent = content.replace(/"/g, '""');
-    csvRows.push([rawID, `"${cleanContent}"`]);
-  });
+    if(!match){
+        return null;
+    }
 
-  const csvString = csvRows.map(row => row.join(",")).join("\n");
 
-  const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", "SplicingDetails.csv");
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-});*/
+    return {
 
-document.getElementById('downloadPage5CSV').addEventListener('click', function() {
-    try {
-        if (!pointFeatures || pointFeatures.length === 0) {
-            alert("No point GeoJSON loaded yet. Please upload a splicing detail GeoJSON first.");
+        cable: match[2],
+
+        start:Number(match[3]),
+
+        end:Number(match[4] ?? match[3])
+
+    };
+
+}
+
+
+
+function replaceFiberRange(line,start,end){
+
+    return line.replace(
+        /\(\d+(?:-\d+)?\)/,
+        "(" + start + "-" + end + ")"
+    );
+
+}
+
+function generateAllPage4(){
+
+    exportedFeatures.forEach(function(exportFeature){
+
+        let latlng = L.latLng(
+            exportFeature.geometry.coordinates[1],
+            exportFeature.geometry.coordinates[0]
+        );
+
+
+        let pointFeature = pointLayer
+            .toGeoJSON()
+            .features
+            .find(f =>
+                f.properties.ID === exportFeature.properties.Handhole_ID
+            );
+
+
+        if(!pointFeature){
             return;
         }
 
-        // Create features array
-        const features = pointFeatures.map(feature => {
-            try {
-                const coords = feature.geometry?.coordinates;
-                const latlng = coords ? L.latLng(coords[1], coords[0]) : L.latLng(0, 0);
-                
-                return {
-                    type: "Feature",
-                    geometry: feature.geometry,
-                    properties: {
-                        ID: feature.properties?.ID,
-                        Size: feature.properties.Size,
-                        Equipment: feature.properties.Equipment,
-                        Spec: feature.properties.Spec,
-                        "Tier Rating":feature.properties["Tier Rating"],
-                        SplicingContent: generatePage5ContentOnly(feature, latlng)
-                    }
-                };
-            } catch (e) {
-                console.error("Error processing feature:", feature, e);
-                return null;
+
+        let p = pointFeature.properties;
+
+
+        let page1 = `
+            <b>${p["ID"] ?? ""}</b><br>
+            <b>${p["Tier Rating"] ?? ""} ${p["Size"] ?? ""}</b>
+        `;
+
+
+        if(p["Spec_1"] && p["lines"]){
+            page1 += `
+            <br><br>
+            <b>${p["Spec_1"]}</b><br>
+            ${p["lines"]?.replace(/\n/g,"<br>")
+            .replace(/Demand/g, "Spare for " + p["Spec_1"]) ?? ""}
+            `;
+        }
+
+
+        if(p["Spec_2"] && p["lines_2"]){
+            page1 += `
+            
+            <b>${p["Spec_2"]}</b><br>
+            ${p["lines_2"]?.replace(/\n/g,"<br>")
+            .replace(/Demand/g, "Spare for " + p["Spec_2"]) ?? ""}
+            `;
+        }
+
+
+        if(p["Spec_3"] && p["lines_3"]){
+            page1 += `
+            
+            <b>${p["Spec_3"]}</b><br>
+            ${p["lines_3"]?.replace(/\n/g,"<br>")
+            .replace(/Demand/g, "Spare for " + p["Spec_3"]) ?? ""}
+            `;
+        }
+
+
+        let cables = getIntersectingCables(latlng);
+
+
+        let page3 = page1;
+
+
+        cables.forEach(function(cable){
+
+            let cableID = cable.properties.ID ?? "";
+
+            // Skip Stub cables
+            if(cableID.toLowerCase().includes("stub")){
+                return;
             }
-        }).filter(f => f !== null); // Remove any null features from errors
 
-        // Create GeoJSON
-        const geoJson = {
-            type: "FeatureCollection",
-            features: features
-        };
+            let direction = getCableDirection(
+                cable,
+                latlng
+            );
 
-        // Create download
-        const blob = new Blob([JSON.stringify(geoJson, null, 2)], { 
-            type: "application/geo+json" 
+
+            //let cableID = cable.properties.ID;
+
+
+            let regex = new RegExp(
+                "(" + cableID + "\\s*\\([^)]*\\))",
+                "g"
+            );
+
+
+            page3 = page3.replace(
+                regex,
+                "$1 " + direction
+            );
+
         });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = "SplicingContent.geojson";
-        document.body.appendChild(link);
-        link.click();
-        
-        // Clean up
-        setTimeout(() => {
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-        }, 100);
-        
-    } catch (e) {
-        console.error("Download failed:", e);
-        alert("Download failed. Check console for details.");
+
+
+        // THIS IS THE REAL PAGE 4
+        let page4 = createPage4(page3);
+
+        // remove unnecessary whitespace
+        page4 = removeHTMLWhitespace(page4);                                                                                                        
+
+        exportFeature.properties.Page4_Content = page4;
+
+    });
+
+}
+
+function createPage4(page3){
+
+    return mergeCableRanges(page3)
+        .replace(
+            /\(Passthrough\)/g,
+            "<b>(Passthrough)</b>"
+        );
+
+}
+function removeHTMLWhitespace(content){
+
+    return content
+        .replace(/\s+/g, " ")   // remove multiple spaces/new lines
+        .replace(/>\s+</g, "><") // remove spaces between HTML tags
+        .trim();
+
+}
+
+function downloadGeoJSON(){
+
+
+    let geojson = {
+        type:"FeatureCollection",
+        features: exportedFeatures
+    };
+
+
+    let blob = new Blob(
+        [
+            JSON.stringify(
+                geojson,
+                null,
+                2
+            )
+        ],
+        {
+            type:"application/json"
+        }
+    );
+
+
+    let url = URL.createObjectURL(blob);
+
+
+    let a = document.createElement("a");
+
+    a.href = url;
+
+    a.download = "Handhole_Page4_Content.geojson";
+
+    document.body.appendChild(a);
+
+    a.click();
+
+
+    document.body.removeChild(a);
+
+    URL.revokeObjectURL(url);
+
+}
+
+document
+.getElementById("pointFile")
+.addEventListener("change",function(e){
+
+    loadGeoJSON(
+        e.target.files[0],
+        "point"
+    );
+
+});
+
+
+
+document
+.getElementById("lineFile")
+.addEventListener("change", function(e){
+
+    let files = e.target.files;
+
+    let loaded = 0;
+
+
+    for(let i = 0; i < files.length; i++){
+
+        loadGeoJSON(
+            files[i],
+            "line"
+        );
+
+        loaded++;
+
     }
+
+
+    // wait until all line files are loaded
+    setTimeout(function(){
+
+        generateAllPage4();
+
+        console.log("Page4 generated");
+
+    },1000);
+
+
 });
 
 
